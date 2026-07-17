@@ -49,6 +49,43 @@ watch the transition, and see `docs/api-contracts.md` for every route.
 Ticket text is sent to the configured LLM provider for classification; that is
 inherent to the product. Review provider data-retention terms before use.
 
+## Review and routing rules
+
+Reviewers work the queues over the API. List what needs attention (triaged and
+needs_human, oldest first), then approve a correct triage or correct the labels:
+
+```bash
+curl http://127.0.0.1:8000/reviews/pending
+
+curl -X POST http://127.0.0.1:8000/tickets/<id>/approve
+
+curl -X POST http://127.0.0.1:8000/tickets/<id>/correct \
+  -H "Content-Type: application/json" \
+  -d '{"intent":"billing","priority":"P3","sentiment":"negative","note":"Duplicate charge."}'
+```
+
+A correction stores a full gold-label snapshot and re-routes the ticket by the
+corrected labels. Export approvals and corrections as JSONL in the eval-dataset
+shape (append the lines to `evals/dataset.jsonl` to grow the eval set):
+
+```bash
+curl http://127.0.0.1:8000/corrections/export        # optional ?since=<ISO-8601>
+```
+
+Routing rules are first-match (ordered, conditions AND-ed, a null condition is a
+wildcard); no match falls to `DEFAULT_QUEUE`. Read or atomically replace them:
+
+```bash
+curl http://127.0.0.1:8000/rules
+
+curl -X PUT http://127.0.0.1:8000/rules \
+  -H "Content-Type: application/json" \
+  -d '{"rules":[{"priority":"P1","queue":"urgent"},{"intent":"billing","queue":"billing"}]}'
+```
+
+Rules apply at triage and correction time; already-routed tickets are not
+re-routed. See `docs/api-contracts.md` for the full request/response shapes.
+
 ## Test
 
 ```bash
