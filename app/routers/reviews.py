@@ -1,18 +1,24 @@
 """Review workflow: pending queue, approve, correct, and gold-label export."""
 
 import logging
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.deps import get_db, require_api_key
+from app.config import Settings
+from app.deps import get_db, require_api_key, settings_dep
 from app.errors import InvalidStateError, NotFoundError
-from app.models import Ticket, utcnow
+from app.models import Correction, Ticket, utcnow
 from app.routers.tickets import ticket_detail, ticket_list_item
+from app.schemas.reviews import CorrectRequest
 from app.schemas.tickets import TicketListOut, TicketOut
+from app.services.routing import load_rules, resolve_queue
 
 log = logging.getLogger("app.reviews")
+
+_CORRECTABLE_STATUSES = ("triaged", "needs_human")
 
 router = APIRouter(dependencies=[Depends(require_api_key)])
 
@@ -56,4 +62,41 @@ def approve_ticket(ticket_id: str, db: Session = Depends(get_db)) -> TicketOut:
     ticket.updated_at = utcnow()
     db.commit()
     log.info("ticket approved", extra={"ticket_id": ticket.id})
+    return ticket_detail(db, ticket)
+
+
+@router.post("/tickets/{ticket_id}/correct")
+def correct_ticket(
+    ticket_id: str,
+    payload: CorrectRequest,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dep),
+) -> TicketOut:
+    """Store gold labels and re-route by them. Valid from triaged or needs_human."""
+    ticket = _get_ticket(db, ticket_id)
+    if ticket.status not in _CORRECTABLE_STATUSES:
+        raise InvalidStateError("Only triaged or needs_human tickets can be corrected.")
+
+    db.add(
+        Correction(
+            id=uuid4().hex,
+            ticket_id=ticket.id,
+            intent=payload.intent,
+            priority=payload.priority,
+            sentiment=payload.sentiment,
+            note=payload.note,
+        )
+    )
+    ticket.status = "corrected"
+    ticket.queue = resolve_queue(
+        load_rules(db),
+        intent=payload.intent,
+        priority=payload.priority,
+        sentiment=payload.sentiment,
+        default_queue=settings.default_queue,
+    )
+    ticket.triage_error = None
+    ticket.updated_at = utcnow()
+    db.commit()
+    log.info("ticket corrected", extra={"ticket_id": ticket.id, "queue": ticket.queue})
     return ticket_detail(db, ticket)
