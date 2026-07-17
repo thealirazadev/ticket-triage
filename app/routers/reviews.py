@@ -4,6 +4,7 @@ import logging
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -11,9 +12,11 @@ from app.config import Settings
 from app.deps import get_db, require_api_key, settings_dep
 from app.errors import InvalidStateError, NotFoundError
 from app.models import Correction, Ticket, utcnow
+from app.routers.stats import _parse_since
 from app.routers.tickets import ticket_detail, ticket_list_item
 from app.schemas.reviews import CorrectRequest
 from app.schemas.tickets import TicketListOut, TicketOut
+from app.services.export import export_lines
 from app.services.routing import load_rules, resolve_queue
 
 log = logging.getLogger("app.reviews")
@@ -100,3 +103,13 @@ def correct_ticket(
     db.commit()
     log.info("ticket corrected", extra={"ticket_id": ticket.id, "queue": ticket.queue})
     return ticket_detail(db, ticket)
+
+
+@router.get("/corrections/export")
+def export_corrections(
+    db: Session = Depends(get_db),
+    since: str | None = Query(default=None),
+) -> StreamingResponse:
+    """Stream gold-labeled tickets (approved + corrected) as JSONL."""
+    since_dt = _parse_since(since)
+    return StreamingResponse(export_lines(db, since_dt), media_type="application/x-ndjson")
