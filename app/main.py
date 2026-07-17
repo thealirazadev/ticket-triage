@@ -3,6 +3,7 @@ routers, and the worker lifespan."""
 
 import logging
 import time
+from contextlib import asynccontextmanager
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -12,8 +13,23 @@ from app.db import make_engine, make_session_factory
 from app.errors import register_exception_handlers
 from app.logging import bind_context, configure_logging, reset_context
 from app.routers import health, tickets, webhooks
+from app.services.worker import Worker
 
 log = logging.getLogger("app.request")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    settings = get_settings()
+    worker: Worker | None = None
+    if settings.worker_enabled:
+        worker = Worker(settings, app.state.session_factory)
+        worker.start()
+    try:
+        yield
+    finally:
+        if worker is not None:
+            worker.stop()
 
 
 def create_app() -> FastAPI:
@@ -23,7 +39,7 @@ def create_app() -> FastAPI:
     engine = make_engine(settings.database_url)
     session_factory = make_session_factory(engine)
 
-    app = FastAPI(title="ticket-triage")
+    app = FastAPI(title="ticket-triage", lifespan=lifespan)
     app.state.engine = engine
     app.state.session_factory = session_factory
 
