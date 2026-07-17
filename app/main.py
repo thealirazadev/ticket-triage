@@ -12,7 +12,7 @@ from app.config import get_settings
 from app.db import make_engine, make_session_factory
 from app.errors import register_exception_handlers
 from app.logging import bind_context, configure_logging, reset_context
-from app.routers import health, reviews, stats, tickets, webhooks
+from app.routers import health, reviews, rules, stats, tickets, webhooks
 from app.services.worker import Worker
 
 log = logging.getLogger("app.request")
@@ -71,6 +71,7 @@ def create_app() -> FastAPI:
     app.include_router(tickets.router)
     app.include_router(webhooks.router)
     app.include_router(reviews.router)
+    app.include_router(rules.router)
     app.include_router(stats.router)
     return app
 
