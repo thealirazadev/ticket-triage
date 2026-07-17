@@ -56,3 +56,38 @@ uv run ruff check .                  # lint
 uv run black --check .               # format check (black . to apply)
 uv run pytest                        # full suite; provider mocked, no network, no secrets
 ```
+
+## Evals
+
+`evals/dataset.jsonl` is a committed, labeled dataset (68 synthetic tickets
+covering every label). The eval runner executes the real classification pipeline
+per row and reports per-field accuracy, per-label precision/recall/F1, a
+confusion summary, and parse-failure/cost accounting, then gates the result
+against `evals/baseline.json`.
+
+Run it offline with the committed recorded fixtures (no provider key needed):
+
+```bash
+uv run python -m evals.run --fixtures evals/fixtures.jsonl        # full run + gate
+uv run python -m evals.run --fixtures evals/fixtures.jsonl --limit 5   # smoke run (gate skipped)
+```
+
+Against the real provider (spends provider budget), omit `--fixtures` so the
+pipeline calls the configured `LLM_BASE_URL`:
+
+```bash
+uv run python -m evals.run                      # requires LLM_API_KEY/LLM_BASE_URL/LLM_MODEL
+uv run python -m evals.run --update-baseline    # rewrite the baseline after an approved change
+```
+
+Exit codes: `0` pass (or gate not applicable), `1` regression beyond
+`EVAL_REGRESSION_THRESHOLD`, `2` a config or dataset/baseline-hash error. Set
+`NO_COLOR=1` for plain output. The committed `evals/baseline.json` was produced
+from the recorded fixtures as an offline stand-in; regenerate it from a real
+provider run with `--update-baseline` before relying on it as a quality bar.
+
+The CI `eval` job runs the real-provider eval, gated to manual dispatch or to
+pull requests that change classification behavior (`app/prompts.py`,
+`app/services/classifier.py`, `app/services/llm_client.py`, or `evals/**`) with a
+funded key configured. It never runs on the default test job, which needs no
+secrets.
