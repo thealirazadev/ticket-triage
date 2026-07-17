@@ -332,14 +332,78 @@ def render_report(
     return "\n".join(lines)
 
 
+# --- baseline gate ------------------------------------------------------------
+
+
+def load_baseline(path: str) -> dict | None:
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise EvalConfigError(f"cannot read baseline {path}: {exc}") from exc
+
+
+def build_baseline(metrics: dict, output: RunOutput, *, sha: str, model: str) -> dict:
+    from datetime import UTC, datetime
+
+    return {
+        "created_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "model": model,
+        "prompt_version": PROMPT_VERSION,
+        "dataset_sha256": sha,
+        "n": len(output.results),
+        "metrics": {
+            field: {
+                "accuracy": round(metrics[field]["accuracy"], 4),
+                "macro_f1": round(metrics[field]["macro_f1"], 4),
+            }
+            for field in FIELDS
+        },
+        "parse_failure_rate": round(parse_failure_rate(output), 4),
+    }
+
+
+def write_baseline(path: str, baseline: dict) -> None:
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(baseline, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+
+
+def compare_baseline(
+    metrics: dict, baseline: dict, threshold: float, pf_rate: float
+) -> tuple[bool, str, float]:
+    """Return (regressed, largest_drop_label, largest_drop_delta).
+
+    delta is current - baseline, so a value below -threshold is a regression;
+    for the parse-failure rate an *increase* is the regression.
+    """
+    deltas: list[tuple[str, float]] = []
+    for field in FIELDS:
+        for metric in ("accuracy", "macro_f1"):
+            current = metrics[field][metric]
+            base = baseline["metrics"][field][metric]
+            deltas.append((f"{field} {metric}", current - base))
+    base_pf = baseline.get("parse_failure_rate", 0.0)
+    deltas.append(("parse_failure_rate", base_pf - pf_rate))
+
+    regressed = any(delta < -threshold for _, delta in deltas)
+    label, delta = min(deltas, key=lambda item: item[1])
+    return regressed, label, delta
+
+
 # --- CLI ----------------------------------------------------------------------
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="evals.run", description="Run the classification eval.")
     parser.add_argument("--dataset", default="evals/dataset.jsonl")
+    parser.add_argument("--baseline", default="evals/baseline.json")
     parser.add_argument("--fixtures", default=os.environ.get("EVAL_FIXTURES_PATH"))
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--update-baseline", action="store_true")
+    parser.add_argument("--no-fail-on-regression", action="store_true")
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument("-q", "--quiet", action="store_true")
     return parser
@@ -356,11 +420,21 @@ def _require_provider(settings: Settings, fixtures: dict | None) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     settings = get_settings()
+    threshold = settings.eval_regression_threshold
     try:
         rows = load_dataset(args.dataset)
         sha = dataset_sha256(args.dataset)
         fixtures = load_fixtures(args.fixtures) if args.fixtures else None
         _require_provider(settings, fixtures)
+        baseline = load_baseline(args.baseline)
+        # A changed dataset invalidates the comparison: fail fast before spending
+        # on provider calls, unless we are explicitly rewriting the baseline.
+        if baseline is not None and not args.update_baseline:
+            if baseline.get("dataset_sha256") != sha:
+                raise EvalConfigError(
+                    f"dataset sha256 {sha[:12]} does not match baseline "
+                    f"{str(baseline.get('dataset_sha256'))[:12]}; rerun with --update-baseline"
+                )
     except EvalConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -369,17 +443,54 @@ def main(argv: list[str] | None = None) -> int:
         rows, settings, fixtures=fixtures, limit=args.limit, progress=sys.stderr.isatty()
     )
     metrics = compute_metrics(output)
+    model = settings.llm_model or "(none)"
     report = render_report(
         output,
         metrics,
         dataset_path=args.dataset,
         sha=sha,
-        model=settings.llm_model or "(none)",
+        model=model,
         quiet=args.quiet,
         verbose=args.verbose,
     )
     print(report)
+
+    if args.update_baseline:
+        new_baseline = build_baseline(metrics, output, sha=sha, model=model)
+        _print_baseline_change(baseline, new_baseline)
+        write_baseline(args.baseline, new_baseline)
+        print(f"wrote baseline {args.baseline}")
+        return 0
+
+    if baseline is None:
+        print(_paint("warning: no baseline found; gate skipped", "33"))
+        return 0
+    if args.limit:
+        print(_paint(f"warning: partial run (--limit {args.limit}); gate skipped", "33"))
+        return 0
+
+    pf_rate = parse_failure_rate(output)
+    regressed, drop_label, drop_delta = compare_baseline(metrics, baseline, threshold, pf_rate)
+    verdict = "FAIL" if regressed else "PASS"
+    painted = _paint(verdict, "31" if regressed else "32")
+    print(
+        f"verdict: {painted}  (threshold {threshold:.2f}; "
+        f"largest drop: {drop_label} {drop_delta:+.2f})"
+    )
+    if regressed and not args.no_fail_on_regression:
+        return 1
     return 0
+
+
+def _print_baseline_change(old: dict | None, new: dict) -> None:
+    if old is None:
+        print("baseline: creating new baseline")
+        return
+    for field in FIELDS:
+        for metric in ("accuracy", "macro_f1"):
+            was = old.get("metrics", {}).get(field, {}).get(metric)
+            now = new["metrics"][field][metric]
+            print(f"  {field} {metric}: {was} -> {now}")
 
 
 if __name__ == "__main__":
