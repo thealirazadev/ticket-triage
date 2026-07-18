@@ -1,0 +1,83 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.28"
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Sync dependencies
+        run: uv sync --frozen
+      - name: Lint
+        run: uv run ruff check .
+      - name: Format check
+        run: uv run black --check .
+      - name: Migrate a scratch database
+        run: uv run alembic upgrade head
+        env:
+          DATABASE_URL: sqlite:///./data/ci.db
+          WORKER_ENABLED: "false"
+      - name: Tests
+        run: uv run pytest
+
+  # Detect whether a PR changes anything that can move classification behavior.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.filter.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: filter
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+          changed=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
+          if echo "$changed" | grep -Eq '^(app/prompts\.py|app/services/classifier\.py|app/services/llm_client\.py|evals/)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Real-provider quality gate. It spends provider budget, so it is opt-in: it
+  # runs on manual dispatch, or on a PR that changes classification behavior only
+  # when a funded key has been configured (repository variable RUN_EVAL == 'true',
+  # with the LLM_API_KEY secret and LLM_BASE_URL/LLM_MODEL variables set). Without
+  # that opt-in no real provider calls are made.
+  eval:
+    needs: [test, changes]
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (needs.changes.outputs.run == 'true' && vars.RUN_EVAL == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.28"
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Sync dependencies
+        run: uv sync --frozen
+      - name: Run eval against the provider
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+        run: uv run python -m evals.run
