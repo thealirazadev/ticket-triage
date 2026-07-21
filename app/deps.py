@@ -30,5 +30,7 @@ def require_api_key(request: Request, settings: Settings = Depends(settings_dep)
     if not expected:
         return
     provided = request.headers.get("X-API-Key", "")
-    if not hmac.compare_digest(provided, expected):
+    # Compare as bytes: header values decode to arbitrary text, and
+    # hmac.compare_digest rejects str inputs containing non-ASCII characters.
+    if not hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8")):
         raise UnauthorizedError("A valid X-API-Key header is required.")

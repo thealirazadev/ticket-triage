@@ -50,3 +50,12 @@ def test_wrong_key_returns_401(secured_client):
 def test_correct_key_allows_access(secured_client):
     response = secured_client.get("/tickets", headers={"X-API-Key": "s3cret"})
     assert response.status_code == 200
+
+
+def test_non_ascii_key_returns_401(secured_client):
+    # Header bytes above 0x7f decode to a non-ASCII string; comparing those with
+    # hmac.compare_digest on str raises TypeError. An unauthenticated caller must
+    # get a clean 401, never an unhandled server error.
+    response = secured_client.get("/tickets", headers={"X-API-Key": "kéy".encode()})
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthorized"
