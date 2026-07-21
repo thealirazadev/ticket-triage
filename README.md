@@ -1,5 +1,8 @@
 # ticket-triage
 
+[![ci](https://github.com/thealirazadev/ticket-triage/actions/workflows/ci.yml/badge.svg)](https://github.com/thealirazadev/ticket-triage/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 ticket-triage is a support-ticket triage service. Tickets arrive over REST or a generic email-webhook JSON shape; the service classifies each one (intent, priority, sentiment) via an LLM provider API using strictly validated structured output, writes a short summary, and routes it to a queue through configurable rules. Humans review and correct the triage through the API, corrections are exportable as labeled data, and a committed eval dataset plus an eval runner measure classification accuracy against a stored baseline so regressions fail CI instead of shipping.
 
 ## Stack
@@ -85,6 +88,94 @@ curl -X PUT http://127.0.0.1:8000/rules \
 
 Rules apply at triage and correction time; already-routed tickets are not
 re-routed. See `docs/api-contracts.md` for the full request/response shapes.
+
+## Design decisions
+
+The trade-offs below are the load-bearing ones; the full rationale is in
+`docs/architecture.md`.
+
+- **A polling worker thread, not a broker or `BackgroundTasks`.** The database
+  is the queue: `status = "received"` *is* the pending entry, so a restart
+  resumes exactly where it left off and idempotent ingestion means a webhook
+  replay cannot enqueue the same ticket twice. `BackgroundTasks` ties the work
+  to the request lifecycle (a crash between response and task loses it, and a
+  webhook burst spawns unbounded concurrent provider calls). A broker
+  (Celery/Redis) buys parallelism and delivery guarantees this service does not
+  need and would double the operational surface. The accepted cost: one process,
+  tickets triaged serially, throughput bounded by the provider round-trip, and
+  at-least-once processing where a crash mid-classification re-runs one ticket.
+
+- **Structured output: strict schema, one repair, then `needs_human`.** Provider
+  text enters the system only through the `TriageResult` pydantic model
+  (enum-checked labels, bounded summary); the label enums are additionally
+  CHECK-constrained in the database. On a parse or validation failure the
+  classifier makes exactly one repair call carrying the invalid output and the
+  errors; a second failure writes no triage row and moves the ticket to
+  `needs_human` with `triage_error = "parse_failed"`. Invalid model output is
+  never persisted, only logged as a truncated snippet. Rejected: trusting the
+  model to always return valid JSON, and unbounded repair loops that burn budget
+  on a model that cannot recover.
+
+- **Circuit-open routes to `needs_human` with no auto-re-triage.** An in-memory
+  consecutive-failure breaker opens after a threshold and, while open, skips the
+  provider entirely and marks tickets `needs_human` with
+  `triage_error = "circuit_open"` (cheap, no timeout waits). Tickets accumulate
+  in the human queue during an outage rather than waiting invisibly for
+  recovery, and they are not automatically re-triaged afterward: re-triage is an
+  explicit human action, so a burst of provider failures never turns into a
+  surprise batch of provider calls later. Ingestion never touches the provider,
+  so `POST /tickets` stays fast and available throughout.
+
+- **Replaying an `external_id` returns 200 with the existing ticket.** Ingestion
+  is idempotent on `external_id` (the source system's key), backstopped by a
+  UNIQUE constraint and a race-safe insert-then-reselect. A first insert returns
+  201; a replay returns 200 with the already-stored ticket rather than a
+  duplicate row or a 409, so at-least-once webhook delivery is safe to retry.
+
+- **Rules are replaced as a full ordered set (`PUT /rules`), not per-rule CRUD.**
+  Routing is first-match over an ordered list, so order is part of the meaning.
+  A single transactional replace makes the whole rule set atomic and its
+  evaluation order explicit in the request body; per-rule create/update/delete
+  would invite partially-applied edits and ambiguous reordering. An empty set is
+  legal (everything falls to `DEFAULT_QUEUE`).
+
+- **The committed eval baseline is an offline stand-in.** `evals/baseline.json`
+  was produced from the recorded `evals/fixtures.jsonl` run so the eval harness
+  and its regression gate work with no provider key and no spend. It is a
+  scaffold, not a real quality bar: regenerate it from a real-provider run with
+  `--update-baseline` before trusting the gate. The real-provider eval job is
+  path-gated and opt-in in CI so it never spends budget on unrelated changes.
+
+## Benchmark
+
+How much throughput the service's own code costs per ticket, with provider time
+excluded (the provider is a mocked transport that returns instantly). This is a
+ceiling on the pipeline, not an end-to-end figure: in production throughput is
+bounded by the provider round-trip, which is seconds per ticket.
+
+```bash
+uv run python benchmarks/pipeline.py        # defaults to 2000 tickets x 5 runs
+```
+
+Measured on Linux 6.8.0 x86_64, 12 CPUs, Python 3.12.13, SQLite, single thread,
+2000 tickets per run, 5 runs, median reported:
+
+| storage                | ingest/sec | triage/sec | combined ingest to routed/sec |
+|------------------------|-----------:|-----------:|------------------------------:|
+| disk (durable commits) |        140 |        111 |                            54 |
+| tmpfs (RAM-backed)     |      1,115 |        475 |                           308 |
+
+`ingest` is the `POST /tickets` path (validation, idempotency check, insert);
+`triage` is one `process_next_ticket` (prompt assembly, JSON parse, schema
+validation, rule evaluation, writes); `combined` is both stages per ticket.
+
+The two rows say different things. The disk row is bound by durability, not by
+this code: every ticket costs one committing `fsync` on ingest and another on
+triage, so ~54 tickets/sec is really this machine's commit latency. The tmpfs row
+runs the identical code and migrations against a RAM-backed filesystem, which
+isolates the pipeline's own CPU cost at ~308 tickets/sec combined. Either way the
+service's overhead is far below the provider round-trip, so the provider, not the
+pipeline, sets real-world throughput.
 
 ## Test
 
