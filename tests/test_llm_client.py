@@ -134,6 +134,22 @@ def test_malformed_200_body_recorded_as_api_error(db, make_llm_client, no_backof
     assert client.breaker._consecutive_failures == 1
 
 
+def test_408_recorded_as_timeout(db, make_llm_client, no_backoff):
+    # A 408 Request Timeout is a timeout outcome, not a generic api_error; the
+    # recorded outcome must reflect that for accurate stats.
+    handler = _count_handler(lambda _n, _r: httpx.Response(408))
+    client = make_llm_client(handler)
+    with pytest.raises(ProviderError) as excinfo:
+        client.complete(db, MESSAGES, purpose="classify")
+    db.commit()
+
+    assert excinfo.value.outcome == "timeout"
+    assert handler.calls["n"] == 1  # 408 is not in the retryable set
+    from app.models import LlmCall
+
+    assert db.query(LlmCall).one().outcome == "timeout"
+
+
 def test_breaker_opens_after_threshold_then_skips_calls(db, make_llm_client, no_backoff):
     handler = _count_handler(lambda _n, _r: httpx.Response(400))
     client = make_llm_client(handler)
