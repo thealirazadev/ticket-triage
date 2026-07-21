@@ -7,6 +7,7 @@ parses triage output; that is the classifier's job. This module only decides
 whether a call succeeded at the HTTP level and records its cost/latency.
 """
 
+import json
 import logging
 import random
 import time
@@ -183,7 +184,19 @@ class LlmClient:
                 return last_outcome, None, None, last_detail
 
             if response.status_code == 200:
-                content, usage = self._extract(response)
+                try:
+                    content, usage = self._extract(response)
+                except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                    # A 200 whose body is not decodable JSON is a broken provider
+                    # response, not triage data. Record it as a failure so cost and
+                    # outcome are accounted for and the breaker can trip, instead of
+                    # letting an unhandled decode error escape the client.
+                    last_outcome = "api_error"
+                    last_detail = f"malformed body: {type(exc).__name__}"
+                    if attempt < attempts - 1:
+                        self._sleep_backoff(attempt)
+                        continue
+                    return last_outcome, None, None, last_detail
                 return "ok", content, usage, ""
 
             last_outcome = "timeout" if response.status_code in {408} else "api_error"
