@@ -126,13 +126,13 @@ ticket-triage/
 Major versions below; exact versions are pinned (`==`) in `pyproject.toml` at install time and `uv.lock` is committed.
 
 - **Python 3.12** - current stable; this repo's baseline (the sibling askdocs project targets 3.11+, but nothing here needs to support below 3.12, so the floor is raised deliberately).
-- **FastAPI 0.115 + Uvicorn 0.34** - typed request/response models, OpenAPI for free, dependency injection for auth/session/settings. Endpoints are synchronous (threadpool) to match the sync worker and DB layer.
+- **FastAPI 0.133 (Starlette 1.x) + Uvicorn 0.34** - typed request/response models, OpenAPI for free, dependency injection for auth/session/settings. Endpoints are synchronous (threadpool) to match the sync worker and DB layer. The FastAPI floor is set by security patches in Starlette: only 0.133+ accepts a Starlette 1.x release, and the fixes for the Starlette advisories ship in 1.3.1.
 - **Pydantic v2 + pydantic-settings 2** - one typing system for request validation, the strict `TriageResult` schema that gates LLM output, and env-driven config read once at startup.
 - **SQLAlchemy 2.0 + Alembic 1.x** - ORM with typed models and parameterized queries everywhere, and real migrations. Chosen over stdlib `sqlite3` (which askdocs uses) because this service must run the same schema on SQLite in dev and Postgres in prod; SQLAlchemy abstracts the dialect and Alembic owns schema history including the seeded routing rules.
 - **SQLite (dev) / PostgreSQL 16 via `psycopg` 3 (prod)** - `DATABASE_URL` selects the backend. `psycopg[binary]` sits in an optional `prod` dependency group so dev installs stay light. Enum-valued columns get CHECK constraints so both backends refuse out-of-set labels.
 - **httpx 0.28** - the only HTTP client, used synchronously with explicit connect/read timeouts for every call to the LLM provider API. Retries with backoff and the circuit breaker are implemented in `llm_client.py` (~50 lines) rather than pulling in a retry library. Tests use `httpx.MockTransport`, so no mocking dependency is needed.
 - **LLM provider API** - a chat-completions-style HTTP endpoint; `LLM_BASE_URL`, `LLM_MODEL`, and `LLM_API_KEY` come from env, so the provider is swappable config, not code. The service requests JSON output by prompt instruction and trusts nothing: every response passes through `TriageResult` validation. Token usage is read from the standard `usage` object when present; when absent, tokens are recorded as null and cost as 0 (never estimated).
-- **pytest 8 / Ruff / Black** - tests, lint, format; managed with `uv`, lockfile committed.
+- **pytest 9 / Ruff / Black 26** - tests, lint, format; managed with `uv`, lockfile committed.
 
 No other runtime dependencies. Anything beyond this list requires approval per `docs/rules.md`.
 
