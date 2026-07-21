@@ -119,6 +119,28 @@ def test_provider_error_raises_provider_failure(db, make_llm_client, no_backoff)
     assert excinfo.value.reason == "provider_error"
 
 
+def test_non_string_content_falls_back_cleanly(db, make_llm_client, no_backoff):
+    # Some providers return message.content as a list of content parts, not a
+    # string. That must flow through the normal parse-fail -> repair -> needs_human
+    # path, not crash the classifier with an AttributeError.
+    def handler(_request: httpx.Request) -> httpx.Response:
+        body = {
+            "choices": [{"message": {"content": ["not", "a", "string"]}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        }
+        return httpx.Response(200, json=body)
+
+    client = make_llm_client(handler)
+    with pytest.raises(TriageFailure) as excinfo:
+        _classify(db, client)
+    db.commit()
+    assert excinfo.value.reason == "parse_failed"
+    # Both the classify and repair calls are recorded as parse_error.
+    rows = db.query(LlmCall).all()
+    assert len(rows) == 2
+    assert all(r.outcome == "parse_error" for r in rows)
+
+
 def test_long_body_is_truncated_for_prompt(db, make_llm_client):
     captured = {}
 
