@@ -116,6 +116,24 @@ def test_400_not_retried(db, make_llm_client, no_backoff):
     assert db.query(LlmCall).one().outcome == "api_error"
 
 
+def test_malformed_200_body_recorded_as_api_error(db, make_llm_client, no_backoff):
+    # A 200 whose body is not JSON (e.g. a proxy HTML error page) must not escape
+    # the client as an unhandled decode error: it is a provider failure.
+    handler = _count_handler(lambda _n, _r: httpx.Response(200, text="<html>not json</html>"))
+    client = make_llm_client(handler)
+    with pytest.raises(ProviderError) as excinfo:
+        client.complete(db, MESSAGES, purpose="classify")
+    db.commit()
+
+    assert excinfo.value.outcome == "api_error"
+    assert handler.calls["n"] == 3  # retried like a transient failure, then recorded
+    from app.models import LlmCall
+
+    assert db.query(LlmCall).one().outcome == "api_error"
+    # The failure must count toward the breaker so a broken provider trips it.
+    assert client.breaker._consecutive_failures == 1
+
+
 def test_breaker_opens_after_threshold_then_skips_calls(db, make_llm_client, no_backoff):
     handler = _count_handler(lambda _n, _r: httpx.Response(400))
     client = make_llm_client(handler)
