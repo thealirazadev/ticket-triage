@@ -214,7 +214,7 @@ class LlmClient:
             if response.status_code in _RETRYABLE_STATUS and attempt < attempts - 1:
                 self._sleep_backoff(attempt)
                 continue
-            return "api_error", None, None, last_detail
+            return last_outcome, None, None, last_detail
         return last_outcome, None, None, last_detail
 
     @staticmethod
