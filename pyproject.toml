@@ -4,8 +4,8 @@ version = "0.1.0"
 description = "HTTP service that triages inbound support tickets with an LLM provider API"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "fastapi==0.133.0",
-    "uvicorn==0.34.3",
+    "fastapi==0.139.2",
+    "uvicorn==0.51.0",
     "pydantic==2.13.4",
     "pydantic-settings==2.14.2",
     "sqlalchemy==2.0.51",
@@ -18,9 +18,9 @@ prod = ["psycopg[binary]==3.3.4"]
 
 [dependency-groups]
 dev = [
-    "pytest==9.0.3",
-    "ruff==0.8.6",
-    "black==26.3.1",
+    "pytest==9.1.1",
+    "ruff==0.15.22",
+    "black==26.5.1",
 ]
 
 [build-system]
