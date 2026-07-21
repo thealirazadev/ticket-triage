@@ -161,8 +161,18 @@ class LlmClient:
             raise ProviderError(outcome, detail)
 
         self._breaker.record_success()
+        # Providers usually return message.content as a string, but some return
+        # null or a list of content parts. Normalize to text so the classifier's
+        # parse path treats an unexpected shape as a parse failure rather than
+        # crashing on a non-string value.
+        if isinstance(content, str):
+            text = content
+        elif content is None:
+            text = ""
+        else:
+            text = str(content)
         return LlmResult(
-            content=content or "",
+            content=text,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             call=call,
