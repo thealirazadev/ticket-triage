@@ -4,7 +4,7 @@ Base URL: `http://127.0.0.1:8000`. All bodies are JSON (`application/json`) exce
 
 ## Authentication
 
-- Controlled by the `API_KEY` env var. Unset: all routes open (local convenience). Set: every route below except `GET /health` requires `X-API-Key: <key>`; missing or wrong returns `401 unauthorized`. Comparison is constant-time.
+- Controlled by the `API_KEY` env var. Unset: all routes open (local convenience). Set: every route below except the `GET /health` and `GET /ready` probes requires `X-API-Key: <key>`; missing or wrong returns `401 unauthorized`. Comparison is constant-time.
 
 ## Error format
 
@@ -84,6 +84,16 @@ Label enums (exact strings):
 Liveness. Always open.
 
 - Response `200`: `{ "status": "ok" }`
+
+---
+
+## GET /ready
+
+Readiness. Always open. Verifies database connectivity and reports the provider circuit-breaker state.
+
+- Response `200`: `{ "status": "ready", "database": "ok", "circuit_breaker": "closed" }`
+  - `circuit_breaker`: `closed` (healthy), `open` (tripped, provider calls skipped), `half_open` (cooldown elapsed, next call is a trial), or `disabled` (worker off, so the API path never calls the provider).
+- Response `503`: `{ "status": "not_ready", "database": "unavailable", "circuit_breaker": ... }` when the database check fails. An open breaker does not fail readiness: the API still accepts and queues tickets.
 
 ---
 
@@ -288,6 +298,16 @@ Operational totals: ticket flow and provider spend.
     "corrected": 6,
     "total": 77
   },
+  "queues": {
+    "general": 30,
+    "urgent": 9,
+    "security": 5
+  },
+  "labels": {
+    "intent": { "billing": 18, "bug": 22, "account_access": 7 },
+    "priority": { "P1": 6, "P2": 20, "P3": 25, "P4": 21 },
+    "sentiment": { "negative": 24, "neutral": 40, "positive": 8 }
+  },
   "llm": {
     "calls": 84,
     "ok": 80,
@@ -304,6 +324,7 @@ Operational totals: ticket flow and provider spend.
 ```
 
   - `failures` counts `timeout` + `api_error` + `parse_error` outcomes. Token sums skip null rows; `cost_usd` is 0 when prices are unconfigured. Latency percentiles are computed over recorded calls (documented limit: in-memory computation, fine at this scale).
+  - `queues` counts tickets grouped by resolved queue (tickets with no queue, e.g. still `received`, are omitted). `labels` breaks down stored triage labels by `intent`, `priority`, and `sentiment`; only observed values appear. Both honor `since`.
 - Errors: `422` on bad `since`, `401`.
 
 ---
@@ -313,6 +334,7 @@ Operational totals: ticket flow and provider spend.
 | Route                        | Success   | Common errors        |
 |------------------------------|-----------|----------------------|
 | `GET /health`                | 200       | -                    |
+| `GET /ready`                 | 200       | 503                  |
 | `POST /tickets`              | 201 / 200 | 422, 401             |
 | `POST /webhooks/email`       | 201 / 200 | 422, 401             |
 | `GET /tickets`               | 200       | 422, 401             |
