@@ -25,6 +25,8 @@ async def lifespan(app: FastAPI):
     if settings.worker_enabled:
         worker = Worker(settings, app.state.session_factory)
         worker.start()
+    # Published so the readiness probe can report the shared breaker state.
+    app.state.worker = worker
     try:
         yield
     finally:
