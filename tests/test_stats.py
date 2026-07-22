@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from app.models import LlmCall, Ticket
+from app.models import LlmCall, Ticket, Triage
 
 
 def _ticket(status, created_at=None):
@@ -17,6 +17,45 @@ def _ticket(status, created_at=None):
         status=status,
         created_at=created_at or datetime.now(UTC),
     )
+
+
+def _ticket_with_triage(
+    db,
+    *,
+    queue="general",
+    intent="billing",
+    priority="P2",
+    sentiment="neutral",
+    created_at=None,
+):
+    ts = created_at or datetime.now(UTC)
+    ticket = Ticket(
+        id=uuid4().hex,
+        external_id=uuid4().hex,
+        channel="web",
+        sender="a@b.com",
+        subject="s",
+        body="b",
+        status="triaged",
+        queue=queue,
+        created_at=ts,
+    )
+    db.add(ticket)
+    db.flush()  # persist the ticket before its FK-bound triage
+    db.add(
+        Triage(
+            id=uuid4().hex,
+            ticket_id=ticket.id,
+            intent=intent,
+            priority=priority,
+            sentiment=sentiment,
+            summary="x",
+            model="m",
+            prompt_version="1",
+            created_at=ts,
+        )
+    )
+    return ticket
 
 
 def _call(outcome, latency, inp=None, out=None, cost=0, created_at=None):
@@ -114,3 +153,38 @@ def test_bad_since_returns_422(client):
     response = client.get("/stats", params={"since": "not-a-date"})
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation_error"
+
+
+def test_empty_breakdown_is_empty(client):
+    body = client.get("/stats").json()
+    assert body["queues"] == {}
+    assert body["labels"] == {"intent": {}, "priority": {}, "sentiment": {}}
+
+
+def test_queue_and_label_breakdown(client, db):
+    _ticket_with_triage(db, queue="urgent", intent="bug", priority="P1", sentiment="negative")
+    _ticket_with_triage(db, queue="urgent", intent="bug", priority="P2", sentiment="negative")
+    _ticket_with_triage(
+        db, queue="security", intent="account_access", priority="P2", sentiment="neutral"
+    )
+    db.add(_ticket("received"))  # no queue: excluded from the queue breakdown
+    db.commit()
+
+    body = client.get("/stats").json()
+    assert body["queues"] == {"urgent": 2, "security": 1}
+    assert body["labels"]["intent"] == {"bug": 2, "account_access": 1}
+    assert body["labels"]["priority"] == {"P1": 1, "P2": 2}
+    assert body["labels"]["sentiment"] == {"negative": 2, "neutral": 1}
+
+
+def test_breakdown_respects_since(client, db):
+    old = datetime.now(UTC) - timedelta(days=2)
+    recent = datetime.now(UTC)
+    _ticket_with_triage(db, queue="urgent", intent="bug", created_at=old)
+    _ticket_with_triage(db, queue="security", intent="billing", created_at=recent)
+    db.commit()
+
+    cutoff = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    body = client.get("/stats", params={"since": cutoff}).json()
+    assert body["queues"] == {"security": 1}
+    assert body["labels"]["intent"] == {"billing": 1}

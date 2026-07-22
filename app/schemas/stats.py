@@ -24,7 +24,17 @@ class LlmStats(BaseModel):
     p95_latency_ms: int
 
 
+class LabelBreakdown(BaseModel):
+    """Distribution of stored triage labels. Only observed values appear."""
+
+    intent: dict[str, int]
+    priority: dict[str, int]
+    sentiment: dict[str, int]
+
+
 class StatsOut(BaseModel):
     tickets: TicketCounts
+    queues: dict[str, int]
+    labels: LabelBreakdown
     llm: LlmStats
     since: str | None

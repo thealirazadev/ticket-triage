@@ -8,10 +8,10 @@ import math
 from datetime import datetime
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import InstrumentedAttribute, Session
 
-from app.models import STATUSES, LlmCall, Ticket
-from app.schemas.stats import LlmStats, StatsOut, TicketCounts
+from app.models import STATUSES, LlmCall, Ticket, Triage
+from app.schemas.stats import LabelBreakdown, LlmStats, StatsOut, TicketCounts
 
 _FAILURE_OUTCOMES = ("timeout", "api_error", "parse_error")
 
@@ -21,6 +21,24 @@ def _percentile(sorted_values: list[int], pct: float) -> int:
         return 0
     rank = math.ceil(pct / 100 * len(sorted_values))
     return sorted_values[max(rank - 1, 0)]
+
+
+def _queue_counts(db: Session, since: datetime | None) -> dict[str, int]:
+    stmt = (
+        select(Ticket.queue, func.count()).where(Ticket.queue.is_not(None)).group_by(Ticket.queue)
+    )
+    if since is not None:
+        stmt = stmt.where(Ticket.created_at >= since)
+    return {queue: count for queue, count in db.execute(stmt).all()}
+
+
+def _label_counts(
+    db: Session, column: InstrumentedAttribute, since: datetime | None
+) -> dict[str, int]:
+    stmt = select(column, func.count()).group_by(column)
+    if since is not None:
+        stmt = stmt.where(Triage.created_at >= since)
+    return {value: count for value, count in db.execute(stmt).all()}
 
 
 def compute_stats(db: Session, since: datetime | None, since_raw: str | None) -> StatsOut:
@@ -35,6 +53,13 @@ def compute_stats(db: Session, since: datetime | None, since_raw: str | None) ->
         approved=counts.get("approved", 0),
         corrected=counts.get("corrected", 0),
         total=sum(counts.get(status, 0) for status in STATUSES),
+    )
+
+    queues = _queue_counts(db, since)
+    labels = LabelBreakdown(
+        intent=_label_counts(db, Triage.intent, since),
+        priority=_label_counts(db, Triage.priority, since),
+        sentiment=_label_counts(db, Triage.sentiment, since),
     )
 
     call_stmt = select(LlmCall)
@@ -56,4 +81,4 @@ def compute_stats(db: Session, since: datetime | None, since_raw: str | None) ->
         avg_latency_ms=int(sum(latencies) / n) if n else 0,
         p95_latency_ms=_percentile(latencies, 95),
     )
-    return StatsOut(tickets=tickets, llm=llm, since=since_raw)
+    return StatsOut(tickets=tickets, queues=queues, labels=labels, llm=llm, since=since_raw)
