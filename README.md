@@ -52,6 +52,202 @@ watch the transition, and see `docs/api-contracts.md` for every route.
 Ticket text is sent to the configured LLM provider for classification; that is
 inherent to the product. Review provider data-retention terms before use.
 
+## Example session
+
+The output below is captured verbatim from a real run of the service. There is no
+network and no API key: [`scripts/demo.sh`](scripts/demo.sh) migrates a throwaway SQLite
+database, starts the real app (routers, worker thread, and all) through
+[`scripts/demo_server.py`](scripts/demo_server.py) with the worker's provider client wired
+to an `httpx.MockTransport` that returns a fixed classification, then runs the curl calls
+below. Everything except the provider transport is the real code path. Reproduce it with:
+
+```bash
+scripts/demo.sh                      # requires uv, curl, and jq
+```
+
+Ids and timestamps below are from one recorded run and vary each time. `$TID` is the `id`
+returned when the ticket is ingested.
+
+**1. Ingest a ticket.** It returns immediately with `status: "received"` — ingestion never
+calls the provider, so `POST /tickets` stays fast:
+
+```console
+$ curl -sS -X POST http://127.0.0.1:8000/tickets -H 'Content-Type: application/json' \
+    -d '{"external_id":"demo-1","subject":"Charged twice for my subscription","body":"I was billed twice this month for order 5567 and need one of the charges reversed.","sender":"dana@example.com","channel":"web"}' | jq
+{
+  "id": "c30706b50b2b46bb8757db6dbaa30774",
+  "external_id": "demo-1",
+  "channel": "web",
+  "sender": "dana@example.com",
+  "subject": "Charged twice for my subscription",
+  "status": "received",
+  "queue": null,
+  "triage_error": null,
+  "triage": null,
+  "created_at": "2026-07-22T22:24:41Z",
+  "updated_at": "2026-07-22T22:24:41Z",
+  "body": "I was billed twice this month for order 5567 and need one of the charges reversed.",
+  "correction": null,
+  "metrics": null
+}
+```
+
+**2. The background worker triages it** within one poll interval. Reading the ticket back
+shows `status: "triaged"`, the validated labels and summary, the resolved `queue`, and the
+per-ticket provider metrics (one call, tokens, cost, latency):
+
+```console
+$ curl -sS http://127.0.0.1:8000/tickets/$TID | jq
+{
+  "id": "c30706b50b2b46bb8757db6dbaa30774",
+  "external_id": "demo-1",
+  "channel": "web",
+  "sender": "dana@example.com",
+  "subject": "Charged twice for my subscription",
+  "status": "triaged",
+  "queue": "billing",
+  "triage_error": null,
+  "triage": {
+    "intent": "billing",
+    "priority": "P2",
+    "sentiment": "negative",
+    "summary": "Customer was billed twice for their monthly subscription and wants one duplicate charge reversed.",
+    "model": "triage-demo-model",
+    "prompt_version": "1",
+    "attempts": 1,
+    "created_at": "2026-07-22T22:24:41Z"
+  },
+  "created_at": "2026-07-22T22:24:41Z",
+  "updated_at": "2026-07-22T22:24:41Z",
+  "body": "I was billed twice this month for order 5567 and need one of the charges reversed.",
+  "correction": null,
+  "metrics": {
+    "llm_calls": 1,
+    "input_tokens": 418,
+    "output_tokens": 39,
+    "cost_usd": 0.000496,
+    "latency_ms": 3
+  }
+}
+```
+
+**3. List what is awaiting review** (triaged or needs_human), oldest first:
+
+```console
+$ curl -sS http://127.0.0.1:8000/reviews/pending | jq
+{
+  "tickets": [
+    {
+      "id": "c30706b50b2b46bb8757db6dbaa30774",
+      "external_id": "demo-1",
+      "channel": "web",
+      "sender": "dana@example.com",
+      "subject": "Charged twice for my subscription",
+      "status": "triaged",
+      "queue": "billing",
+      "triage_error": null,
+      "triage": {
+        "intent": "billing",
+        "priority": "P2",
+        "sentiment": "negative",
+        "summary": "Customer was billed twice for their monthly subscription and wants one duplicate charge reversed.",
+        "model": "triage-demo-model",
+        "prompt_version": "1",
+        "attempts": 1,
+        "created_at": "2026-07-22T22:24:41Z"
+      },
+      "created_at": "2026-07-22T22:24:41Z",
+      "updated_at": "2026-07-22T22:24:41Z"
+    }
+  ],
+  "total": 1,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+**4. A reviewer corrects the labels.** The correction is stored as a gold-label snapshot
+and the ticket is re-routed by the corrected labels — here escalating to `P1` moves it from
+the `billing` queue to `urgent`, while the original machine `triage` is preserved:
+
+```console
+$ curl -sS -X POST http://127.0.0.1:8000/tickets/$TID/correct -H 'Content-Type: application/json' \
+    -d '{"intent":"billing","priority":"P1","sentiment":"negative","note":"Duplicate charge, escalating to urgent."}' | jq
+{
+  "id": "c30706b50b2b46bb8757db6dbaa30774",
+  "external_id": "demo-1",
+  "channel": "web",
+  "sender": "dana@example.com",
+  "subject": "Charged twice for my subscription",
+  "status": "corrected",
+  "queue": "urgent",
+  "triage_error": null,
+  "triage": {
+    "intent": "billing",
+    "priority": "P2",
+    "sentiment": "negative",
+    "summary": "Customer was billed twice for their monthly subscription and wants one duplicate charge reversed.",
+    "model": "triage-demo-model",
+    "prompt_version": "1",
+    "attempts": 1,
+    "created_at": "2026-07-22T22:24:41Z"
+  },
+  "created_at": "2026-07-22T22:24:41Z",
+  "updated_at": "2026-07-22T22:24:42Z",
+  "body": "I was billed twice this month for order 5567 and need one of the charges reversed.",
+  "correction": {
+    "intent": "billing",
+    "priority": "P1",
+    "sentiment": "negative",
+    "note": "Duplicate charge, escalating to urgent.",
+    "created_at": "2026-07-22T22:24:42Z"
+  },
+  "metrics": {
+    "llm_calls": 1,
+    "input_tokens": 418,
+    "output_tokens": 39,
+    "cost_usd": 0.000496,
+    "latency_ms": 3
+  }
+}
+```
+
+**5. Operational totals** — ticket flow counts and provider spend:
+
+```console
+$ curl -sS http://127.0.0.1:8000/stats | jq
+{
+  "tickets": {
+    "received": 0,
+    "triaged": 0,
+    "needs_human": 0,
+    "approved": 0,
+    "corrected": 1,
+    "total": 1
+  },
+  "llm": {
+    "calls": 1,
+    "ok": 1,
+    "failures": 0,
+    "failure_rate": 0.0,
+    "input_tokens": 418,
+    "output_tokens": 39,
+    "cost_usd": 0.000496,
+    "avg_latency_ms": 3,
+    "p95_latency_ms": 3
+  },
+  "since": null
+}
+```
+
+### Interactive API docs
+
+The service serves auto-generated OpenAPI docs at `/docs` (and the raw schema at
+`/openapi.json`). Every route and schema shown below is generated from the code, so it never
+drifts from the implementation:
+
+![Swagger UI for the ticket-triage API at /docs, listing every route and schema](docs/images/openapi-docs.png)
+
 ## Review and routing rules
 
 Reviewers work the queues over the API. List what needs attention (triaged and
