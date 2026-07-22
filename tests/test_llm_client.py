@@ -178,6 +178,52 @@ def test_breaker_unit_open_cooldown_and_trial(monkeypatch):
     assert breaker.allow() is True
 
 
+def test_breaker_recovers_through_client_after_cooldown(
+    db, make_llm_client, no_backoff, monkeypatch
+):
+    # Drive the full recovery path through complete(): the breaker opens on
+    # repeated failures, rejects calls during the cooldown, then permits one
+    # trial once the cooldown elapses and closes again when that trial succeeds.
+    now = {"t": 1000.0}
+    monkeypatch.setattr("app.services.llm_client.time.monotonic", lambda: now["t"])
+    state = {"fail": True}
+
+    def handler(_request):
+        if state["fail"]:
+            return httpx.Response(500)
+        return httpx.Response(200, json=chat_response(triage_json()))
+
+    client = make_llm_client(handler)
+    for _ in range(5):  # CIRCUIT_FAILURE_THRESHOLD consecutive failures
+        with pytest.raises(ProviderError):
+            client.complete(db, MESSAGES, purpose="classify")
+    assert client.breaker.state == "open"
+    with pytest.raises(CircuitOpenError):
+        client.complete(db, MESSAGES, purpose="classify")
+
+    now["t"] += 61  # CIRCUIT_COOLDOWN_SECONDS (60) elapsed -> one trial allowed
+    assert client.breaker.state == "half_open"
+    state["fail"] = False
+    result = client.complete(db, MESSAGES, purpose="classify")
+    db.commit()
+    assert result.content
+    assert client.breaker.state == "closed"
+
+
+def test_backoff_schedule_grows_within_bounds(monkeypatch):
+    # The real backoff math is bypassed everywhere else by the no_backoff fixture;
+    # assert it grows and stays bounded: 0.5 * 4**attempt plus up to 0.25s jitter.
+    slept: list[float] = []
+    monkeypatch.setattr("app.services.llm_client.time.sleep", slept.append)
+    for attempt in range(3):
+        LlmClient._sleep_backoff(attempt)
+
+    assert slept[0] < slept[1] < slept[2]
+    assert 0.5 <= slept[0] < 0.75
+    assert 2.0 <= slept[1] < 2.25
+    assert 8.0 <= slept[2] < 8.25
+
+
 def test_breaker_state_transitions(monkeypatch):
     now = {"t": 1000.0}
     monkeypatch.setattr("app.services.llm_client.time.monotonic", lambda: now["t"])
