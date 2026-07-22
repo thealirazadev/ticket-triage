@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.config import Settings
 from app.models import Ticket, Triage, utcnow
 from app.services.classifier import TriageFailure, classify_ticket
-from app.services.llm_client import LlmClient
+from app.services.llm_client import CircuitBreaker, LlmClient
 from app.services.routing import load_rules, resolve_queue
 
 log = logging.getLogger("app.worker")
@@ -107,6 +107,12 @@ class Worker:
         self._client = LlmClient(settings)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+
+    @property
+    def breaker(self) -> CircuitBreaker:
+        """The shared provider client's circuit breaker, exposed for the
+        readiness probe."""
+        return self._client.breaker
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="triage-worker", daemon=True)

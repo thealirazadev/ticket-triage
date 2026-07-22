@@ -178,6 +178,23 @@ def test_breaker_unit_open_cooldown_and_trial(monkeypatch):
     assert breaker.allow() is True
 
 
+def test_breaker_state_transitions(monkeypatch):
+    now = {"t": 1000.0}
+    monkeypatch.setattr("app.services.llm_client.time.monotonic", lambda: now["t"])
+    breaker = CircuitBreaker(threshold=2, cooldown_seconds=30)
+
+    assert breaker.state == "closed"
+    breaker.record_failure()
+    assert breaker.state == "closed"  # one failure, still under threshold
+    breaker.record_failure()  # opens
+    assert breaker.state == "open"
+
+    now["t"] += 31  # cooldown elapsed -> trial permitted but not yet taken
+    assert breaker.state == "half_open"
+    breaker.record_success()  # trial closes the circuit
+    assert breaker.state == "closed"
+
+
 def test_client_uses_bearer_header_from_settings(settings):
     captured = {}
 

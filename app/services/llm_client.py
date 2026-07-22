@@ -62,6 +62,17 @@ class CircuitBreaker:
             return False
         return True
 
+    @property
+    def state(self) -> str:
+        """Report the breaker state for observability: "open" while tripped,
+        "half_open" once the cooldown has elapsed (the next call is a trial), and
+        "closed" when healthy."""
+        if self._open_until and time.monotonic() < self._open_until:
+            return "open"
+        if self._open_until:
+            return "half_open"
+        return "closed"
+
     def record_success(self) -> None:
         if self._open_until:
             log.warning("circuit closed", extra={"circuit_state": "closed"})
