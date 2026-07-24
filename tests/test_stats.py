@@ -124,6 +124,31 @@ def test_aggregates_match_expected(client, db):
     assert llm["p95_latency_ms"] == 500  # nearest-rank over 5 values
 
 
+def test_p95_uses_nearest_rank_not_max(client, db):
+    # 20 latencies 10..200. Nearest-rank p95 = ceil(0.95*20)=19th value = 190,
+    # which is distinct from the max (200), so this pins the algorithm rather
+    # than accidentally agreeing with max as the 5-value case does.
+    for latency in range(10, 201, 10):
+        db.add(_call("ok", latency))
+    db.commit()
+
+    llm = client.get("/stats").json()["llm"]
+    assert llm["calls"] == 20
+    assert llm["p95_latency_ms"] == 190
+    assert llm["avg_latency_ms"] == 105  # int(2100/20)
+
+
+def test_api_error_counts_as_failure(client, db):
+    for outcome in ["ok", "ok", "api_error"]:
+        db.add(_call(outcome, 100))
+    db.commit()
+
+    llm = client.get("/stats").json()["llm"]
+    assert llm["ok"] == 2
+    assert llm["failures"] == 1  # api_error is a failure outcome
+    assert llm["failure_rate"] == round(1 / 3, 4)
+
+
 def test_since_filter(client, db):
     old = datetime.now(UTC) - timedelta(days=2)
     recent = datetime.now(UTC)
