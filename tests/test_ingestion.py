@@ -28,6 +28,49 @@ def test_replay_same_external_id_returns_200_single_row(client, make_ticket):
     assert listed["total"] == 1
 
 
+def test_webhook_replay_same_message_id_returns_200_single_row(client):
+    payload = {"message_id": "wh-dup", "from": "a@b.com", "text": "first body"}
+    first = client.post("/webhooks/email", json=payload)
+    assert first.status_code == 201
+    ticket_id = first.json()["id"]
+
+    replay = client.post(
+        "/webhooks/email", json={"message_id": "wh-dup", "from": "a@b.com", "text": "changed body"}
+    )
+    assert replay.status_code == 200
+    assert replay.json()["id"] == ticket_id
+    # Replay text is ignored: the stored body is unchanged.
+    assert replay.json()["body"] == "first body"
+    assert client.get("/tickets").json()["total"] == 1
+
+
+def test_ticket_and_webhook_share_idempotency_namespace(client):
+    # external_id and the webhook message_id are the same column, so an id first
+    # seen over REST is a replay when it arrives again over the webhook.
+    created = client.post(
+        "/tickets",
+        json={
+            "external_id": "shared-id",
+            "subject": "Original subject",
+            "body": "original body",
+            "sender": "u@example.com",
+            "channel": "web",
+        },
+    )
+    assert created.status_code == 201
+    ticket_id = created.json()["id"]
+
+    replay = client.post(
+        "/webhooks/email", json={"message_id": "shared-id", "from": "u@example.com", "text": "hi"}
+    )
+    assert replay.status_code == 200
+    assert replay.json()["id"] == ticket_id
+    # The original row wins: channel stays web, not the webhook's email.
+    assert replay.json()["channel"] == "web"
+    assert replay.json()["subject"] == "Original subject"
+    assert client.get("/tickets").json()["total"] == 1
+
+
 def test_rapid_duplicate_submissions_create_one_row(client):
     payload = {
         "external_id": "race-1",
