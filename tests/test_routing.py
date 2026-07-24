@@ -63,6 +63,57 @@ def test_empty_rule_set_returns_default():
     )
 
 
+def test_sentiment_only_condition_discriminates():
+    # The sentiment branch is never exercised by the seeded rules (they set only
+    # intent/priority), so cover a rule whose sole condition is sentiment.
+    rules = [_rule(1, sentiment="negative", queue="escalations")]
+    assert (
+        resolve_queue(
+            rules, intent="how_to", priority="P3", sentiment="negative", default_queue="general"
+        )
+        == "escalations"
+    )
+    assert (
+        resolve_queue(
+            rules, intent="how_to", priority="P3", sentiment="positive", default_queue="general"
+        )
+        == "general"
+    )
+
+
+def test_falls_through_to_later_matching_rule():
+    # The first rule does not match; a later rule does. The result must be the
+    # later rule's queue, not the default and not the skipped rule's queue.
+    rules = [
+        _rule(1, intent="refund", queue="billing"),
+        _rule(2, priority="P1", queue="urgent"),
+    ]
+    assert (
+        resolve_queue(
+            rules, intent="bug", priority="P1", sentiment="neutral", default_queue="general"
+        )
+        == "urgent"
+    )
+
+
+def test_all_three_conditions_must_all_match():
+    rules = [_rule(1, intent="billing", priority="P1", sentiment="negative", queue="vip")]
+    # All three align -> match.
+    assert (
+        resolve_queue(
+            rules, intent="billing", priority="P1", sentiment="negative", default_queue="general"
+        )
+        == "vip"
+    )
+    # Only the sentiment differs -> the AND fails and it falls to default.
+    assert (
+        resolve_queue(
+            rules, intent="billing", priority="P1", sentiment="neutral", default_queue="general"
+        )
+        == "general"
+    )
+
+
 def test_seeded_rules_route_as_documented(db):
     from app.services.routing import load_rules
 
