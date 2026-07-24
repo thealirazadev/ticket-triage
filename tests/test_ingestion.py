@@ -146,6 +146,26 @@ def test_large_body_within_bound_accepted(make_ticket):
     assert response.status_code == 201
 
 
+def test_webhook_oversized_text_returns_422_in_error_envelope(client):
+    response = client.post(
+        "/webhooks/email",
+        json={"message_id": "wh-big", "from": "a@b.com", "text": "x" * 50_001},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+    # Nothing was stored for the rejected webhook.
+    assert client.get("/tickets").json()["total"] == 0
+
+
+def test_webhook_oversized_subject_returns_422(client):
+    response = client.post(
+        "/webhooks/email",
+        json={"message_id": "wh-subj", "from": "a@b.com", "text": "body", "subject": "s" * 501},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+
+
 def test_blank_subject_returns_422(client):
     response = client.post(
         "/tickets",

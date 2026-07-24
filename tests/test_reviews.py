@@ -149,6 +149,20 @@ def test_correct_unknown_id_is_404(client):
     assert response.status_code == 404
 
 
+def test_correct_oversized_note_is_422_in_error_envelope(client, db):
+    ticket = _triaged(db, "t-corr5")
+    response = client.post(
+        f"/tickets/{ticket.id}/correct",
+        json={"intent": "bug", "priority": "P3", "sentiment": "neutral", "note": "x" * 1001},
+    )
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error"]["code"] == "validation_error"
+    assert isinstance(body["error"]["message"], str) and body["error"]["message"]
+    # The oversized correction is rejected, so the ticket stays reviewable.
+    assert client.get(f"/tickets/{ticket.id}").json()["status"] == "triaged"
+
+
 def test_export_covers_approved_and_corrected(client, db):
     approved = _triaged(db, "t-exp-a", intent="billing", priority="P2", sentiment="negative")
     client.post(f"/tickets/{approved.id}/approve")
