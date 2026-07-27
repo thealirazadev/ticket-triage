@@ -13,8 +13,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
-from app.models import Ticket, Triage, utcnow
-from app.services.classifier import TriageFailure, classify_ticket
+from app.models import ReplyDraft, Ticket, Triage, utcnow
+from app.services.classifier import (
+    ReplyDraftFailure,
+    TriageFailure,
+    TriageOutcome,
+    classify_ticket,
+    generate_reply_draft,
+)
 from app.services.llm_client import CircuitBreaker, LlmClient
 from app.services.routing import load_rules, resolve_queue
 
@@ -89,13 +95,70 @@ def process_next_ticket(db: Session, client: LlmClient, settings: Settings) -> b
         "ticket triaged",
         extra={"ticket_id": ticket.id, "queue": queue, "attempts": outcome.attempts},
     )
+
+    _generate_draft(db, client, settings, ticket, outcome)
     return True
+
+
+def _generate_draft(
+    db: Session, client: LlmClient, settings: Settings, ticket: Ticket, outcome: TriageOutcome
+) -> None:
+    """Best-effort suggested reply draft, generated after the ticket is triaged
+    and committed. A draft failure never disturbs the triaged ticket: it leaves
+    no draft (a human writes one). Cost/latency of the draft calls are still
+    recorded as llm_calls rows, exactly like triage."""
+    try:
+        draft = generate_reply_draft(
+            db,
+            client,
+            ticket_id=ticket.id,
+            subject=ticket.subject,
+            sender=ticket.sender,
+            channel=ticket.channel,
+            body=ticket.body,
+            intent=outcome.result.intent,
+            priority=outcome.result.priority,
+            sentiment=outcome.result.sentiment,
+            summary=outcome.result.summary,
+        )
+    except ReplyDraftFailure as failure:
+        # Persist the recorded llm_calls rows even though no draft is stored.
+        db.commit()
+        log.info(
+            "reply draft skipped",
+            extra={"ticket_id": ticket.id, "error_code": failure.reason},
+        )
+        return
+    except Exception:
+        db.rollback()
+        log.exception("reply draft error", extra={"ticket_id": ticket.id})
+        return
+
+    db.add(
+        ReplyDraft(
+            id=uuid4().hex,
+            ticket_id=ticket.id,
+            body=draft.result.reply,
+            state="draft",
+            model=settings.llm_model,
+            prompt_version=_reply_prompt_version(),
+            attempts=draft.attempts,
+        )
+    )
+    db.commit()
+    log.info("reply draft generated", extra={"ticket_id": ticket.id, "attempts": draft.attempts})
 
 
 def _prompt_version() -> str:
     from app.prompts import PROMPT_VERSION
 
     return PROMPT_VERSION
+
+
+def _reply_prompt_version() -> str:
+    from app.prompts import REPLY_PROMPT_VERSION
+
+    return REPLY_PROMPT_VERSION
 
 
 class Worker:
