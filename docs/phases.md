@@ -125,6 +125,44 @@ Ordering rationale: Phase 1 is the whole triage pipeline (ingest -> classify -> 
 
 ---
 
+## Phase 4 - Suggested reply drafts (v2)
+
+**Goal**: after a ticket is triaged, the worker generates a short suggested reply draft with the LLM provider API, grounded in the ticket and its resolved triage, stores it, and exposes it for a human to fetch, edit, approve, or discard. Drafts are never sent: this is a human-in-the-loop assist, so it stays within the PRD non-goal "no auto-responses or outbound communication". Draft generation reuses the structured-output discipline (strict schema, one repair, graceful failure) and the same per-call cost/latency accounting as triage.
+
+Scope note: this is a v2 feature added after Phases 1-3 shipped. It does not change `docs/PRD.md` or `docs/architecture.md`; it adds one table, one prompt pair, one generator, and four read/transition endpoints.
+
+### Expected commits
+1. `docs: add phase 4 for suggested reply drafts to phases.md`
+2. `feat(db): add reply_drafts table and provider purposes migration`
+3. `feat(reply): add reply-draft schemas`
+4. `feat(prompts): add reply-draft prompt builders`
+5. `feat(reply): add draft generator with repair retry and graceful fallback`
+6. `feat(worker): generate and store a reply draft after triage`
+7. `feat(reply): add fetch, edit, approve, and discard endpoints`
+8. `test(phase4): cover generation, storage, malformed output, and transitions`
+9. `docs: document reply drafts in readme and api-contracts`
+10. `docs: update memory with phase 4`
+
+### Definition of done
+- A new Alembic migration creates the `reply_drafts` table (one row per ticket, `state` CHECK-constrained to `draft`/`approved`/`discarded`) and extends the `llm_calls.purpose` CHECK to allow `reply_draft` and `reply_repair`; `uv run alembic upgrade head` applies clean on a fresh SQLite file and the existing schema is unchanged otherwise.
+- After the worker sets a ticket `triaged` and commits, it makes a best-effort draft: provider output enters only through the strict `ReplyDraftResult` schema, a parse/validation failure triggers exactly one repair call, and a second failure leaves no draft row (never garbage). A draft failure never disturbs the `triaged` state or its queue; the ticket is still fully triaged.
+- Every draft provider call (initial, repair, and failed calls) writes one `llm_calls` row with tokens, cost, latency, and outcome, exactly like triage. `purpose` is `reply_draft` for the first call and `reply_repair` for the repair call.
+- `GET /tickets/{id}/reply` returns the draft (`body`, `state`, `model`, `prompt_version`, `attempts`, draft-only `metrics`) or `404` when the ticket has no draft; `404` for an unknown ticket id.
+- `PUT /tickets/{id}/reply` replaces the draft body (server-validated length) and is valid only while `state` is `draft`; `POST /tickets/{id}/reply/approve` moves `draft -> approved`; `POST /tickets/{id}/reply/discard` moves `draft -> discarded`; any transition from a terminal state returns `409 invalid_state`.
+- Drafts are never sent anywhere; no route emits outbound communication.
+- `uv run ruff check .`, `uv run black --check .`, and `uv run pytest` are clean; new tests cover: a draft generated and stored, malformed model output leaving no draft, edit/approve/discard transitions and their guards, and draft cost recorded as `llm_calls`. The provider stays mocked via `httpx.MockTransport`; no real provider call is ever made.
+
+### Manual test checklist
+- [ ] Start the server with a real provider; ingest a ticket; poll `GET /tickets/{id}` until `triaged`; then `GET /tickets/{id}/reply` returns a short draft with `state: "draft"` and non-null `metrics`.
+- [ ] `PUT /tickets/{id}/reply` with an edited body; confirm `200`, the new body, and `state` still `draft`.
+- [ ] `POST /tickets/{id}/reply/approve`; confirm `state: "approved"`; approve again and confirm `409`; `PUT` after approval confirms `409`.
+- [ ] On a different ticket, `POST /tickets/{id}/reply/discard`; confirm `state: "discarded"`; discard again confirms `409`.
+- [ ] `GET /tickets/{id}/reply` for a ticket that never triaged (still `received`) returns `404`; for an unknown id returns `404`.
+- [ ] Force draft parse failures (mock/degraded provider output); confirm the ticket stays `triaged`, `GET .../reply` is `404` (no draft), and `llm_calls` shows the failed draft attempts with `purpose` `reply_draft`/`reply_repair` and outcome `parse_error`.
+- [ ] Inspect logs: draft generation and skips are logged with `ticket_id`; no ticket text or draft text is logged beyond a truncated snippet on failure.
+
+---
+
 ## Phase verification (run at the end of every phase)
 
 - [ ] `uv run alembic upgrade head` on a fresh database, then `uv run uvicorn app.main:app` starts clean (no warnings/errors in the log).
