@@ -68,7 +68,7 @@ scripts/demo.sh                      # requires uv, curl, and jq
 Ids and timestamps below are from one recorded run and vary each time. `$TID` is the `id`
 returned when the ticket is ingested.
 
-**1. Ingest a ticket.** It returns immediately with `status: "received"` — ingestion never
+**1. Ingest a ticket.** It returns immediately with `status: "received"` - ingestion never
 calls the provider, so `POST /tickets` stays fast:
 
 ```console
@@ -167,7 +167,7 @@ $ curl -sS http://127.0.0.1:8000/reviews/pending | jq
 ```
 
 **4. A reviewer corrects the labels.** The correction is stored as a gold-label snapshot
-and the ticket is re-routed by the corrected labels — here escalating to `P1` moves it from
+and the ticket is re-routed by the corrected labels - here escalating to `P1` moves it from
 the `billing` queue to `urgent`, while the original machine `triage` is preserved:
 
 ```console
@@ -212,7 +212,7 @@ $ curl -sS -X POST http://127.0.0.1:8000/tickets/$TID/correct -H 'Content-Type: 
 }
 ```
 
-**5. Operational totals** — ticket flow counts and provider spend:
+**5. Operational totals** - ticket flow counts and provider spend:
 
 ```console
 $ curl -sS http://127.0.0.1:8000/stats | jq
