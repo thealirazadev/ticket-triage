@@ -22,8 +22,9 @@ from app.schemas.triage import INTENTS, PRIORITIES, SENTIMENTS
 CHANNELS: tuple[str, ...] = ("email", "web", "api")
 STATUSES: tuple[str, ...] = ("received", "triaged", "needs_human", "approved", "corrected")
 TRIAGE_ERRORS: tuple[str, ...] = ("parse_failed", "provider_error", "circuit_open")
-LLM_PURPOSES: tuple[str, ...] = ("classify", "repair")
+LLM_PURPOSES: tuple[str, ...] = ("classify", "repair", "reply_draft", "reply_repair")
 LLM_OUTCOMES: tuple[str, ...] = ("ok", "parse_error", "timeout", "api_error")
+REPLY_STATES: tuple[str, ...] = ("draft", "approved", "discarded")
 
 
 def _in_check(column: str, values: tuple[str, ...]) -> str:
@@ -122,6 +123,30 @@ class Correction(Base):
         CheckConstraint(_in_check("intent", INTENTS), name="ck_corrections_intent"),
         CheckConstraint(_in_check("priority", PRIORITIES), name="ck_corrections_priority"),
         CheckConstraint(_in_check("sentiment", SENTIMENTS), name="ck_corrections_sentiment"),
+    )
+
+
+class ReplyDraft(Base):
+    """One suggested reply draft per ticket, generated after triage. Never sent;
+    a human fetches, edits, approves, or discards it. state moves draft ->
+    approved | discarded and is terminal once left draft."""
+
+    __tablename__ = "reply_drafts"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    ticket_id: Mapped[str] = mapped_column(ForeignKey("tickets.id"), unique=True, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(16), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    __table_args__ = (
+        CheckConstraint(_in_check("state", REPLY_STATES), name="ck_reply_drafts_state"),
     )
 
 
