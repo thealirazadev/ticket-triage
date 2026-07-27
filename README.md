@@ -3,7 +3,7 @@
 [![ci](https://github.com/thealirazadev/ticket-triage/actions/workflows/ci.yml/badge.svg)](https://github.com/thealirazadev/ticket-triage/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-ticket-triage is a support-ticket triage service. Tickets arrive over REST or a generic email-webhook JSON shape; the service classifies each one (intent, priority, sentiment) via an LLM provider API using strictly validated structured output, writes a short summary, and routes it to a queue through configurable rules. Humans review and correct the triage through the API, corrections are exportable as labeled data, and a committed eval dataset plus an eval runner measure classification accuracy against a stored baseline so regressions fail CI instead of shipping.
+ticket-triage is a support-ticket triage service. Tickets arrive over REST or a generic email-webhook JSON shape; the service classifies each one (intent, priority, sentiment) via an LLM provider API using strictly validated structured output, writes a short summary, and routes it to a queue through configurable rules. Humans review and correct the triage through the API, corrections are exportable as labeled data, and a committed eval dataset plus an eval runner measure classification accuracy against a stored baseline so regressions fail CI instead of shipping. After triage, the service also generates a short suggested reply draft for a human to review, edit, approve, or discard - a human-in-the-loop assist that is never sent automatically.
 
 ## Stack
 
@@ -284,6 +284,32 @@ curl -X PUT http://127.0.0.1:8000/rules \
 
 Rules apply at triage and correction time; already-routed tickets are not
 re-routed. See `docs/api-contracts.md` for the full request/response shapes.
+
+## Suggested reply drafts
+
+After a ticket is triaged, the worker makes a best-effort suggested reply draft
+with the LLM provider API, grounded in the ticket and its triage, and stores it
+(one draft per ticket). Drafts are **never sent**: they are a human-in-the-loop
+assist. The same structured-output discipline as triage applies - the draft is
+schema-validated, retried once on malformed output, and on a second failure the
+ticket keeps its triage with no draft rather than storing garbage. Draft
+generation records its own cost/latency as `llm_calls` rows, reported separately
+from triage.
+
+```bash
+curl http://127.0.0.1:8000/tickets/<id>/reply          # fetch the draft
+
+curl -X PUT http://127.0.0.1:8000/tickets/<id>/reply \
+  -H "Content-Type: application/json" \
+  -d '{"body":"Hi Jane, I am looking into your access now and will follow up shortly."}'
+
+curl -X POST http://127.0.0.1:8000/tickets/<id>/reply/approve
+curl -X POST http://127.0.0.1:8000/tickets/<id>/reply/discard
+```
+
+A draft moves `draft -> approved` or `draft -> discarded`; those states are
+terminal, and edits are allowed only while the draft is unresolved. Approving a
+draft records the human's decision; it does not send anything.
 
 ## Design decisions
 

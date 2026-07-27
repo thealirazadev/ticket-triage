@@ -74,7 +74,7 @@ Label enums (exact strings):
 }
 ```
 
-- `triage` is `null` while `status` is `received` and for `needs_human` tickets. `metrics` sums all `llm_calls` rows for the ticket and is `null` when there are none; token fields are `null` when the provider did not report usage.
+- `triage` is `null` while `status` is `received` and for `needs_human` tickets. `metrics` sums all `llm_calls` rows for the ticket (classification, repair, and any reply-draft generation) and is `null` when there are none; token fields are `null` when the provider did not report usage. For draft-only cost, `GET /tickets/{id}/reply` reports the reply-generation calls separately.
 - `correction` (detail only) is `null` unless status is `corrected`, then: `{"intent", "priority", "sentiment", "note", "created_at"}`.
 
 ---
@@ -239,6 +239,74 @@ Gold-labeled tickets as JSONL - the future-eval-data export. Includes `corrected
 
 ---
 
+## Reply drafts
+
+After a ticket is triaged, the worker makes a best-effort suggested reply draft, grounded in the ticket and its triage, and stores it (one draft per ticket, `state: "draft"`). Drafts are a human-in-the-loop assist and are **never sent**: these routes only let a human read, edit, approve, or discard the draft. A draft failure never disturbs the triaged ticket; the ticket simply has no draft.
+
+**ReplyDraft** shape:
+
+```json
+{
+  "ticket_id": "9a1b2c3d4e5f46708192a3b4c5d6e7f8",
+  "body": "Hi Jane, thanks for reaching out. I am sorry you are locked out after the password reset - I am looking into restoring your access now and will follow up shortly.",
+  "state": "draft",
+  "model": "example-model-id",
+  "prompt_version": "1",
+  "attempts": 1,
+  "metrics": {
+    "llm_calls": 1,
+    "input_tokens": 540,
+    "output_tokens": 64,
+    "cost_usd": 0.000668,
+    "latency_ms": 910
+  },
+  "created_at": "2026-07-27T09:15:09Z",
+  "updated_at": "2026-07-27T09:15:09Z"
+}
+```
+
+- `state`: `draft` | `approved` | `discarded`. `draft` is the only non-terminal state.
+- `metrics` sums only the draft-generation `llm_calls` (`purpose` `reply_draft` and `reply_repair`) for the ticket, so draft cost/latency is separate from triage cost; `null` when no draft calls were recorded. Token fields are `null` when the provider did not report usage.
+
+---
+
+## GET /tickets/{id}/reply
+
+- Success `200`: the ReplyDraft shape.
+- Errors: `404 not_found` (unknown ticket id, or the ticket has no draft), `401`.
+
+---
+
+## PUT /tickets/{id}/reply
+
+Replace the draft body with a human edit. Valid only while `state` is `draft`.
+
+- Request: `{ "body": "..." }` - required, 1-2000 chars after trim.
+- Success `200`: the updated ReplyDraft, `state` still `draft`, `updated_at` advanced.
+- Errors: `409 invalid_state` (draft already `approved` or `discarded`), `422`, `404`, `401`.
+
+---
+
+## POST /tickets/{id}/reply/approve
+
+Mark the draft approved. Records the human's decision; it does not send anything.
+
+- Request: empty body.
+- Success `200`: the updated ReplyDraft, `state: "approved"`.
+- Errors: `409 invalid_state` (state is not `draft`), `404`, `401`.
+
+---
+
+## POST /tickets/{id}/reply/discard
+
+Discard the draft.
+
+- Request: empty body.
+- Success `200`: the updated ReplyDraft, `state: "discarded"`.
+- Errors: `409 invalid_state` (state is not `draft`), `404`, `401`.
+
+---
+
 ## GET /rules
 
 Ordered routing rules.
@@ -343,6 +411,10 @@ Operational totals: ticket flow and provider spend.
 | `POST /tickets/{id}/approve` | 200       | 409, 404, 401        |
 | `POST /tickets/{id}/correct` | 200       | 409, 422, 404, 401   |
 | `GET /corrections/export`    | 200       | 422, 401             |
+| `GET /tickets/{id}/reply`    | 200       | 404, 401             |
+| `PUT /tickets/{id}/reply`    | 200       | 409, 422, 404, 401   |
+| `POST /tickets/{id}/reply/approve` | 200 | 409, 404, 401        |
+| `POST /tickets/{id}/reply/discard` | 200 | 409, 404, 401        |
 | `GET /rules`                 | 200       | 401                  |
 | `PUT /rules`                 | 200       | 422, 401             |
 | `GET /stats`                 | 200       | 422, 401             |
