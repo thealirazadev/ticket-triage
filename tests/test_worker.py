@@ -132,3 +132,33 @@ def test_oldest_first_and_resume(db, settings, make_llm_client):
     process_next_ticket(db, client, settings)
     db.refresh(second)
     assert second.status == "triaged"
+
+
+def test_unexpected_error_skips_ticket_instead_of_blocking_queue(db, settings, make_llm_client):
+    poisoned = _received_ticket(db, external_id="poison-1", subject="poison")
+    healthy = _received_ticket(db, external_id="healthy-2")
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if b"poison" in request.content:
+            raise RuntimeError("unexpected bug")
+        return httpx.Response(200, json=chat_response(triage_json()))
+
+    client = make_llm_client(handler)
+    skipped: set[str] = set()
+
+    assert process_next_ticket(db, client, settings, skipped) is True
+    assert skipped == {poisoned.id}
+
+    # The next poll moves on to the healthy ticket rather than retrying the
+    # poisoned one forever at the head of the queue.
+    assert process_next_ticket(db, client, settings, skipped) is True
+    db.refresh(poisoned)
+    db.refresh(healthy)
+    assert poisoned.status == "received"
+    assert healthy.status == "triaged"
+
+    calls_before = calls["n"]
+    assert process_next_ticket(db, client, settings, skipped) is False
+    assert calls["n"] == calls_before

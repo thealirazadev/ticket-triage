@@ -46,7 +46,7 @@ Binding for anyone implementing ticket-triage. Specific to this project; read al
 ### Failures to handle explicitly
 - **Provider call**: timeout, connection error, 429, 5xx -> bounded retries with backoff; final failure -> `llm_calls` outcome `timeout`/`api_error`, breaker counter incremented, ticket -> `needs_human` with `triage_error = "provider_error"`. Non-429 4xx -> no retry, same fallback, cause logged (auth and config errors must be loud).
 - **Provider output**: JSON parse or schema failure -> one repair call; second failure -> `needs_human`, `triage_error = "parse_failed"`, invalid output logged truncated (500 chars max), never stored.
-- **Database**: session errors roll back; the worker catches per-ticket exceptions, logs with `ticket_id`, and continues the loop - one poisoned ticket must not kill the worker. An unexpected worker crash is logged CRITICAL and the thread restarts on next process start (documented, not hidden).
+- **Database**: session errors roll back; the worker catches per-ticket exceptions, logs with `ticket_id`, and continues the loop - one poisoned ticket must not kill the worker. The ticket stays `received` and is skipped for the rest of the process lifetime, so it cannot block the tickets behind it or be retried in a tight loop; a restart gives it one more attempt. An unexpected worker crash is logged CRITICAL and the thread restarts on next process start (documented, not hidden).
 - **Eval runner**: missing key/base-url, unreadable dataset, or baseline hash mismatch -> clear `error:` message on stderr and exit 2. A provider failure for a single row marks that row failed and continues.
 
 ### Friendly API errors vs detailed logs

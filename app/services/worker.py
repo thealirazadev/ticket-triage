@@ -1,8 +1,9 @@
 """The single background worker: poll for received tickets and triage them.
 
 The `received` status is the queue: on restart, unprocessed tickets are picked
-up again. One poisoned ticket is contained (logged, skipped) and never kills the
-loop. There is no asyncio and no broker; the loop is a plain daemon thread.
+up again. One poisoned ticket is contained (logged, skipped for the rest of the
+process lifetime) and never kills or stalls the loop. There is no asyncio and no
+broker; the loop is a plain daemon thread.
 """
 
 import logging
@@ -27,17 +28,24 @@ from app.services.routing import load_rules, resolve_queue
 log = logging.getLogger("app.worker")
 
 
-def process_next_ticket(db: Session, client: LlmClient, settings: Settings) -> bool:
+def process_next_ticket(
+    db: Session, client: LlmClient, settings: Settings, skip_ids: set[str] | None = None
+) -> bool:
     """Triage the oldest received ticket. Returns True if one was processed.
 
     A per-ticket failure sets needs_human with a triage_error and is not
-    re-raised, so the caller's loop keeps running.
+    re-raised, so the caller's loop keeps running. A ticket that raises an
+    unexpected error stays received; when ``skip_ids`` is given its id is added
+    there and later calls pass over it, so it cannot block the tickets behind it
+    or be retried in a tight loop.
     """
-    ticket = db.scalars(
-        select(Ticket).where(Ticket.status == "received").order_by(Ticket.created_at).limit(1)
-    ).first()
+    stmt = select(Ticket).where(Ticket.status == "received")
+    if skip_ids:
+        stmt = stmt.where(Ticket.id.not_in(skip_ids))
+    ticket = db.scalars(stmt.order_by(Ticket.created_at).limit(1)).first()
     if ticket is None:
         return False
+    ticket_id = ticket.id
 
     try:
         outcome = classify_ticket(
@@ -64,7 +72,9 @@ def process_next_ticket(db: Session, client: LlmClient, settings: Settings) -> b
         # Unexpected failure: roll back and leave the ticket for a later poll,
         # but do not let one ticket take down the worker.
         db.rollback()
-        log.exception("ticket processing error", extra={"ticket_id": ticket.id})
+        log.exception("ticket processing error", extra={"ticket_id": ticket_id})
+        if skip_ids is not None:
+            skip_ids.add(ticket_id)
         return True
 
     triage = Triage(
@@ -170,6 +180,8 @@ class Worker:
         self._client = LlmClient(settings)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        # Tickets that raised an unexpected error; skipped until the next restart.
+        self._skipped: set[str] = set()
 
     @property
     def breaker(self) -> CircuitBreaker:
@@ -193,7 +205,7 @@ class Worker:
         while not self._stop.is_set():
             try:
                 with self._session_factory() as db:
-                    processed = process_next_ticket(db, self._client, self._settings)
+                    processed = process_next_ticket(db, self._client, self._settings, self._skipped)
             except Exception:
                 # A loop-level failure (e.g. DB unavailable) must not kill the
                 # thread silently; log and back off one interval.
