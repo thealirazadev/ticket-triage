@@ -258,3 +258,68 @@ def test_client_uses_bearer_header_from_settings(settings):
     finally:
         client.close()
     assert captured["auth"] == "Bearer test-key"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        [],
+        "just a string",
+        {"choices": "not a list"},
+        {"choices": ["not an object"]},
+        {"choices": [{"message": "not an object"}]},
+    ],
+)
+def test_wrong_shape_200_body_recorded_as_api_error(db, make_llm_client, no_backoff, body):
+    # Valid JSON with the wrong envelope shape is a broken provider response. It
+    # must be recorded and count toward the breaker, not escape as AttributeError.
+    handler = _count_handler(lambda _n, _r: httpx.Response(200, json=body))
+    client = make_llm_client(handler)
+    with pytest.raises(ProviderError) as excinfo:
+        client.complete(db, MESSAGES, purpose="classify")
+    db.commit()
+
+    assert excinfo.value.outcome == "api_error"
+    assert handler.calls["n"] == 3
+    from app.models import LlmCall
+
+    assert db.query(LlmCall).one().outcome == "api_error"
+    assert client.breaker._consecutive_failures == 1
+
+
+def test_malformed_usage_records_null_tokens(db, make_llm_client):
+    def handler(_request):
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": triage_json()}}],
+                "usage": {"prompt_tokens": "100", "completion_tokens": -5},
+            },
+        )
+
+    client = make_llm_client(handler)
+    client.complete(db, MESSAGES, purpose="classify")
+    db.commit()
+
+    from app.models import LlmCall
+
+    row = db.query(LlmCall).one()
+    assert row.outcome == "ok"
+    assert row.input_tokens is None
+    assert row.output_tokens is None
+    assert float(row.cost_usd) == 0.0
+
+
+def test_non_object_usage_is_ignored(db, make_llm_client):
+    def handler(_request):
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": triage_json()}}], "usage": [1, 2]}
+        )
+
+    client = make_llm_client(handler)
+    client.complete(db, MESSAGES, purpose="classify")
+    db.commit()
+
+    from app.models import LlmCall
+
+    assert db.query(LlmCall).one().input_tokens is None

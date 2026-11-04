@@ -34,6 +34,10 @@ class ProviderError(Exception):
         self.outcome = outcome  # "timeout" or "api_error"
 
 
+class MalformedEnvelope(ValueError):
+    """A 200 response whose JSON does not have the chat-completions shape."""
+
+
 class CircuitOpenError(Exception):
     """The breaker is open; no provider call was made."""
 
@@ -87,6 +91,15 @@ class CircuitBreaker:
                 "circuit opened",
                 extra={"circuit_state": "open", "circuit_failures": self._consecutive_failures},
             )
+
+
+def _token_count(usage: dict | None, key: str) -> int | None:
+    """A usage token count, or None when absent or not a non-negative integer, so
+    a malformed usage block cannot break cost accounting or the llm_calls row."""
+    value = usage.get(key) if usage else None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
 
 
 class LlmClient:
@@ -147,8 +160,8 @@ class LlmClient:
         outcome, content, usage, detail = self._attempt_with_retries(payload)
         latency_ms = int((time.monotonic() - started) * 1000)
 
-        input_tokens = usage.get("prompt_tokens") if usage else None
-        output_tokens = usage.get("completion_tokens") if usage else None
+        input_tokens = _token_count(usage, "prompt_tokens")
+        output_tokens = _token_count(usage, "completion_tokens")
         call = LlmCall(
             id=uuid4().hex,
             ticket_id=ticket_id,
@@ -207,7 +220,7 @@ class LlmClient:
             if response.status_code == 200:
                 try:
                     content, usage = self._extract(response)
-                except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                except (json.JSONDecodeError, UnicodeDecodeError, MalformedEnvelope) as exc:
                     # A 200 whose body is not decodable JSON is a broken provider
                     # response, not triage data. Record it as a failure so cost and
                     # outcome are accounted for and the breaker can trip, instead of
@@ -231,11 +244,25 @@ class LlmClient:
     @staticmethod
     def _extract(response: httpx.Response) -> tuple[str | None, dict | None]:
         data = response.json()
+        # Valid JSON is not necessarily a valid envelope: a list, a string, or a
+        # choice that is not an object is a broken response, reported as
+        # MalformedEnvelope rather than an AttributeError escaping the client.
+        if not isinstance(data, dict):
+            raise MalformedEnvelope("response body is not a JSON object")
         content = None
         choices = data.get("choices") or []
+        if not isinstance(choices, list):
+            raise MalformedEnvelope("choices is not a list")
         if choices:
-            content = (choices[0].get("message") or {}).get("content")
-        return content, data.get("usage")
+            first = choices[0]
+            if not isinstance(first, dict):
+                raise MalformedEnvelope("choices[0] is not an object")
+            message = first.get("message") or {}
+            if not isinstance(message, dict):
+                raise MalformedEnvelope("choices[0].message is not an object")
+            content = message.get("content")
+        usage = data.get("usage")
+        return content, usage if isinstance(usage, dict) else None
 
     @staticmethod
     def _sleep_backoff(attempt: int) -> None:
