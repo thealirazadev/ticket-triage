@@ -5,6 +5,8 @@ metric shift is attributable to a wording change. Bump it on any edit to the
 prompt text below.
 """
 
+import re
+
 PROMPT_VERSION = "1"
 
 # Versioned independently of PROMPT_VERSION: the reply-draft prompts can change
@@ -110,6 +112,19 @@ Return a corrected JSON object with exactly the single key "reply" (a plain-text
 draft). Return the JSON object only, with no other text."""
 
 
+# Ticket fields are untrusted text placed between <ticket> and <triage>
+# delimiters. A literal "</ticket>" inside a body would close the data block
+# early and let the rest of the body pose as instructions outside it, so any
+# opening or closing delimiter tag in untrusted text is escaped.
+_DELIMITER_TAG = re.compile(r"<(?=\s*/?\s*(?:ticket|triage)\b)", re.IGNORECASE)
+
+
+def escape_delimiters(text: str) -> str:
+    """Escape <ticket>/<triage> tags in untrusted text so it cannot break out of
+    its delimited block."""
+    return _DELIMITER_TAG.sub("&lt;", text)
+
+
 def truncate_body(body: str) -> str:
     if len(body) <= MAX_BODY_CHARS:
         return body
@@ -118,7 +133,10 @@ def truncate_body(body: str) -> str:
 
 def build_classify_messages(subject: str, sender: str, channel: str, body: str) -> list[dict]:
     user = _CLASSIFY_TEMPLATE.format(
-        subject=subject, sender=sender, channel=channel, body=truncate_body(body)
+        subject=escape_delimiters(subject),
+        sender=escape_delimiters(sender),
+        channel=channel,
+        body=escape_delimiters(truncate_body(body)),
     )
     return [
         {"role": "system", "content": _SYSTEM},
@@ -148,14 +166,15 @@ def build_reply_messages(
     summary: str,
 ) -> list[dict]:
     user = _REPLY_TEMPLATE.format(
-        subject=subject,
-        sender=sender,
+        subject=escape_delimiters(subject),
+        sender=escape_delimiters(sender),
         channel=channel,
-        body=truncate_body(body),
+        body=escape_delimiters(truncate_body(body)),
         intent=intent,
         priority=priority,
         sentiment=sentiment,
-        summary=summary,
+        # The summary is model output derived from the ticket, so it is untrusted too.
+        summary=escape_delimiters(summary),
     )
     return [
         {"role": "system", "content": _REPLY_SYSTEM},
