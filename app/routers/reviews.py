@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.config import Settings
@@ -61,9 +61,10 @@ def approve_ticket(ticket_id: str, db: Session = Depends(get_db)) -> TicketOut:
     ticket = _get_ticket(db, ticket_id)
     if ticket.status != "triaged":
         raise InvalidStateError("Only tickets in triaged status can be approved.")
-    ticket.status = "approved"
-    ticket.updated_at = utcnow()
+    if not _set_status_if(db, ticket, ("triaged",), status="approved"):
+        raise InvalidStateError("Only tickets in triaged status can be approved.")
     db.commit()
+    db.refresh(ticket)
     log.info("ticket approved", extra={"ticket_id": ticket.id})
     return ticket_detail(db, ticket)
 
@@ -80,6 +81,17 @@ def correct_ticket(
     if ticket.status not in _CORRECTABLE_STATUSES:
         raise InvalidStateError("Only triaged or needs_human tickets can be corrected.")
 
+    queue = resolve_queue(
+        load_rules(db),
+        intent=payload.intent,
+        priority=payload.priority,
+        sentiment=payload.sentiment,
+        default_queue=settings.default_queue,
+    )
+    if not _set_status_if(
+        db, ticket, _CORRECTABLE_STATUSES, status="corrected", queue=queue, triage_error=None
+    ):
+        raise InvalidStateError("Only triaged or needs_human tickets can be corrected.")
     db.add(
         Correction(
             id=uuid4().hex,
@@ -90,19 +102,27 @@ def correct_ticket(
             note=payload.note,
         )
     )
-    ticket.status = "corrected"
-    ticket.queue = resolve_queue(
-        load_rules(db),
-        intent=payload.intent,
-        priority=payload.priority,
-        sentiment=payload.sentiment,
-        default_queue=settings.default_queue,
-    )
-    ticket.triage_error = None
-    ticket.updated_at = utcnow()
     db.commit()
+    db.refresh(ticket)
     log.info("ticket corrected", extra={"ticket_id": ticket.id, "queue": ticket.queue})
     return ticket_detail(db, ticket)
+
+
+def _set_status_if(db: Session, ticket: Ticket, allowed: tuple[str, ...], **values) -> bool:
+    """Move the ticket to new column values only if it is still in an allowed
+    status, as one conditional UPDATE. Returns False (and rolls back) when a
+    concurrent request changed the status after it was read, so two reviewers
+    cannot both win and silently overwrite each other's decision."""
+    result = db.execute(
+        update(Ticket)
+        .where(Ticket.id == ticket.id, Ticket.status.in_(allowed))
+        .values(updated_at=utcnow(), **values)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        db.rollback()
+        return False
+    return True
 
 
 @router.get("/corrections/export")

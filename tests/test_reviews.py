@@ -222,3 +222,84 @@ def test_export_empty_database(client):
     response = client.get("/corrections/export")
     assert response.status_code == 200
     assert response.text == ""
+
+
+def _race_on_read(monkeypatch, session_factory, ticket_id, mutate):
+    """Simulate a concurrent reviewer: right after the route reads the ticket,
+    another session commits a change to it."""
+    from app.routers import reviews
+
+    original = reviews._get_ticket
+
+    def racing(db_, tid):
+        ticket = original(db_, tid)
+        with session_factory() as other:
+            mutate(other, other.get(Ticket, ticket_id))
+            other.commit()
+        return ticket
+
+    monkeypatch.setattr(reviews, "_get_ticket", racing)
+
+
+def test_correct_loses_race_to_concurrent_approve_with_409(
+    client, db, session_factory, monkeypatch
+):
+    ticket = _triaged(db, "race-approve")
+
+    def approve(_other, row):
+        row.status = "approved"
+
+    _race_on_read(monkeypatch, session_factory, ticket.id, approve)
+    resp = client.post(
+        f"/tickets/{ticket.id}/correct",
+        json={"intent": "billing", "priority": "P1", "sentiment": "negative"},
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "invalid_state"
+
+    from app.models import Correction
+
+    db.expire_all()
+    assert db.get(Ticket, ticket.id).status == "approved"
+    assert db.query(Correction).count() == 0
+
+
+def test_concurrent_double_correct_returns_409_not_500(client, db, session_factory, monkeypatch):
+    ticket = _triaged(db, "race-correct")
+
+    def correct(other, row):
+        from app.models import Correction
+
+        other.add(
+            Correction(
+                id=uuid4().hex,
+                ticket_id=row.id,
+                intent="bug",
+                priority="P2",
+                sentiment="neutral",
+                note=None,
+            )
+        )
+        row.status = "corrected"
+
+    _race_on_read(monkeypatch, session_factory, ticket.id, correct)
+    resp = client.post(
+        f"/tickets/{ticket.id}/correct",
+        json={"intent": "billing", "priority": "P1", "sentiment": "negative"},
+    )
+    assert resp.status_code == 409
+
+
+def test_approve_loses_race_to_concurrent_correct_with_409(
+    client, db, session_factory, monkeypatch
+):
+    ticket = _triaged(db, "race-approve-2")
+
+    def correct(_other, row):
+        row.status = "corrected"
+
+    _race_on_read(monkeypatch, session_factory, ticket.id, correct)
+    resp = client.post(f"/tickets/{ticket.id}/approve")
+    assert resp.status_code == 409
+    db.expire_all()
+    assert db.get(Ticket, ticket.id).status == "corrected"
