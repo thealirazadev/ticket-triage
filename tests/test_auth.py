@@ -59,3 +59,24 @@ def test_non_ascii_key_returns_401(secured_client):
     response = secured_client.get("/tickets", headers={"X-API-Key": "kéy".encode()})
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "unauthorized"
+
+
+def test_startup_warns_when_api_key_unset(settings, monkeypatch, capsys):
+    import logging
+
+    from app.main import create_app
+
+    # Running migrations in-process (the settings fixture) disables existing loggers.
+    monkeypatch.setattr(logging.getLogger("app.auth"), "disabled", False)
+    create_app()
+    out = capsys.readouterr().out
+    assert "API_KEY is not set" in out
+
+
+def test_startup_does_not_warn_when_api_key_set(settings, monkeypatch, capsys):
+    monkeypatch.setenv("API_KEY", "s3cret")
+    get_settings.cache_clear()
+    from app.main import create_app
+
+    create_app()
+    assert "API_KEY is not set" not in capsys.readouterr().out

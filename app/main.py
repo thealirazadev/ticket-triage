@@ -38,6 +38,11 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(settings.log_level)
+    if not settings.api_key:
+        # Open mode is intended for local use only; make it loud in any deployment.
+        logging.getLogger("app.auth").warning(
+            "API_KEY is not set: every route, including PUT /rules, is unauthenticated"
+        )
 
     engine = make_engine(settings.database_url)
     session_factory = make_session_factory(engine)
