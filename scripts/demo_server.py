@@ -2,9 +2,9 @@
 
 This is the real application (real routers, real worker thread, real SQLite, real
 migrations) with exactly one thing replaced: the worker's ``LlmClient`` is constructed
-with an ``httpx.MockTransport`` that returns a fixed, valid classification instead of
-calling a provider. No network and no API key are involved, so ``scripts/demo.sh`` can
-capture genuine request/response pairs deterministically.
+with an ``httpx.MockTransport`` that returns a fixed, valid classification (and a fixed
+reply draft) instead of calling a provider. No network and no API key are involved, so
+``scripts/demo.sh`` can capture genuine request/response pairs deterministically.
 
 Run standalone with:  uv run uvicorn --app-dir scripts demo_server:app
 """
@@ -45,13 +45,26 @@ _TRIAGE = {
 }
 
 
-def _handler(_request: httpx.Request) -> httpx.Response:
+# The fixed reply draft the mock provider returns once the ticket is triaged.
+_REPLY = {
+    "reply": (
+        "Hi Dana, sorry about the duplicate charge on your subscription. I am looking "
+        "into order 5567 now and will follow up once I have checked the billing record."
+    )
+}
+
+
+def _handler(request: httpx.Request) -> httpx.Response:
+    # The worker makes a classify call and then a reply-draft call; answer each
+    # with the shape its prompt asks for, so the draft is not a parse failure.
+    messages = json.loads(request.content)["messages"]
+    if messages[0]["content"].startswith("You are a support agent drafting"):
+        content, usage = _REPLY, {"prompt_tokens": 512, "completion_tokens": 41}
+    else:
+        content, usage = _TRIAGE, {"prompt_tokens": 418, "completion_tokens": 39}
     return httpx.Response(
         200,
-        json={
-            "choices": [{"message": {"content": json.dumps(_TRIAGE)}}],
-            "usage": {"prompt_tokens": 418, "completion_tokens": 39},
-        },
+        json={"choices": [{"message": {"content": json.dumps(content)}}], "usage": usage},
     )
 
 
