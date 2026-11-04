@@ -75,7 +75,7 @@ calls the provider, so `POST /tickets` stays fast:
 $ curl -sS -X POST http://127.0.0.1:8000/tickets -H 'Content-Type: application/json' \
     -d '{"external_id":"demo-1","subject":"Charged twice for my subscription","body":"I was billed twice this month for order 5567 and need one of the charges reversed.","sender":"dana@example.com","channel":"web"}' | jq
 {
-  "id": "c30706b50b2b46bb8757db6dbaa30774",
+  "id": "abe27ffaac2c40b899f0eb4c00953cfa",
   "external_id": "demo-1",
   "channel": "web",
   "sender": "dana@example.com",
@@ -84,8 +84,8 @@ $ curl -sS -X POST http://127.0.0.1:8000/tickets -H 'Content-Type: application/j
   "queue": null,
   "triage_error": null,
   "triage": null,
-  "created_at": "2026-07-22T22:24:41Z",
-  "updated_at": "2026-07-22T22:24:41Z",
+  "created_at": "2026-11-04T09:11:54Z",
+  "updated_at": "2026-11-04T09:11:54Z",
   "body": "I was billed twice this month for order 5567 and need one of the charges reversed.",
   "correction": null,
   "metrics": null
@@ -94,12 +94,13 @@ $ curl -sS -X POST http://127.0.0.1:8000/tickets -H 'Content-Type: application/j
 
 **2. The background worker triages it** within one poll interval. Reading the ticket back
 shows `status: "triaged"`, the validated labels and summary, the resolved `queue`, and the
-per-ticket provider metrics (one call, tokens, cost, latency):
+per-ticket provider metrics (two calls, the triage and the suggested reply draft, with their
+tokens, cost, and latency):
 
 ```console
 $ curl -sS http://127.0.0.1:8000/tickets/$TID | jq
 {
-  "id": "c30706b50b2b46bb8757db6dbaa30774",
+  "id": "abe27ffaac2c40b899f0eb4c00953cfa",
   "external_id": "demo-1",
   "channel": "web",
   "sender": "dana@example.com",
@@ -115,18 +116,18 @@ $ curl -sS http://127.0.0.1:8000/tickets/$TID | jq
     "model": "triage-demo-model",
     "prompt_version": "1",
     "attempts": 1,
-    "created_at": "2026-07-22T22:24:41Z"
+    "created_at": "2026-11-04T09:11:54Z"
   },
-  "created_at": "2026-07-22T22:24:41Z",
-  "updated_at": "2026-07-22T22:24:41Z",
+  "created_at": "2026-11-04T09:11:54Z",
+  "updated_at": "2026-11-04T09:11:54Z",
   "body": "I was billed twice this month for order 5567 and need one of the charges reversed.",
   "correction": null,
   "metrics": {
-    "llm_calls": 1,
-    "input_tokens": 418,
-    "output_tokens": 39,
-    "cost_usd": 0.000496,
-    "latency_ms": 3
+    "llm_calls": 2,
+    "input_tokens": 930,
+    "output_tokens": 80,
+    "cost_usd": 0.00109,
+    "latency_ms": 0
   }
 }
 ```
@@ -138,7 +139,7 @@ $ curl -sS http://127.0.0.1:8000/reviews/pending | jq
 {
   "tickets": [
     {
-      "id": "c30706b50b2b46bb8757db6dbaa30774",
+      "id": "abe27ffaac2c40b899f0eb4c00953cfa",
       "external_id": "demo-1",
       "channel": "web",
       "sender": "dana@example.com",
@@ -154,10 +155,10 @@ $ curl -sS http://127.0.0.1:8000/reviews/pending | jq
         "model": "triage-demo-model",
         "prompt_version": "1",
         "attempts": 1,
-        "created_at": "2026-07-22T22:24:41Z"
+        "created_at": "2026-11-04T09:11:54Z"
       },
-      "created_at": "2026-07-22T22:24:41Z",
-      "updated_at": "2026-07-22T22:24:41Z"
+      "created_at": "2026-11-04T09:11:54Z",
+      "updated_at": "2026-11-04T09:11:54Z"
     }
   ],
   "total": 1,
@@ -174,7 +175,7 @@ the `billing` queue to `urgent`, while the original machine `triage` is preserve
 $ curl -sS -X POST http://127.0.0.1:8000/tickets/$TID/correct -H 'Content-Type: application/json' \
     -d '{"intent":"billing","priority":"P1","sentiment":"negative","note":"Duplicate charge, escalating to urgent."}' | jq
 {
-  "id": "c30706b50b2b46bb8757db6dbaa30774",
+  "id": "abe27ffaac2c40b899f0eb4c00953cfa",
   "external_id": "demo-1",
   "channel": "web",
   "sender": "dana@example.com",
@@ -190,29 +191,30 @@ $ curl -sS -X POST http://127.0.0.1:8000/tickets/$TID/correct -H 'Content-Type: 
     "model": "triage-demo-model",
     "prompt_version": "1",
     "attempts": 1,
-    "created_at": "2026-07-22T22:24:41Z"
+    "created_at": "2026-11-04T09:11:54Z"
   },
-  "created_at": "2026-07-22T22:24:41Z",
-  "updated_at": "2026-07-22T22:24:42Z",
+  "created_at": "2026-11-04T09:11:54Z",
+  "updated_at": "2026-11-04T09:11:55Z",
   "body": "I was billed twice this month for order 5567 and need one of the charges reversed.",
   "correction": {
     "intent": "billing",
     "priority": "P1",
     "sentiment": "negative",
     "note": "Duplicate charge, escalating to urgent.",
-    "created_at": "2026-07-22T22:24:42Z"
+    "created_at": "2026-11-04T09:11:55Z"
   },
   "metrics": {
-    "llm_calls": 1,
-    "input_tokens": 418,
-    "output_tokens": 39,
-    "cost_usd": 0.000496,
-    "latency_ms": 3
+    "llm_calls": 2,
+    "input_tokens": 930,
+    "output_tokens": 80,
+    "cost_usd": 0.00109,
+    "latency_ms": 0
   }
 }
 ```
 
-**5. Operational totals** - ticket flow counts and provider spend:
+**5. Operational totals** - ticket flow counts, per-queue and per-label breakdowns, and provider
+spend:
 
 ```console
 $ curl -sS http://127.0.0.1:8000/stats | jq
@@ -225,16 +227,30 @@ $ curl -sS http://127.0.0.1:8000/stats | jq
     "corrected": 1,
     "total": 1
   },
+  "queues": {
+    "urgent": 1
+  },
+  "labels": {
+    "intent": {
+      "billing": 1
+    },
+    "priority": {
+      "P2": 1
+    },
+    "sentiment": {
+      "negative": 1
+    }
+  },
   "llm": {
-    "calls": 1,
-    "ok": 1,
+    "calls": 2,
+    "ok": 2,
     "failures": 0,
     "failure_rate": 0.0,
-    "input_tokens": 418,
-    "output_tokens": 39,
-    "cost_usd": 0.000496,
-    "avg_latency_ms": 3,
-    "p95_latency_ms": 3
+    "input_tokens": 930,
+    "output_tokens": 80,
+    "cost_usd": 0.00109,
+    "avg_latency_ms": 0,
+    "p95_latency_ms": 0
   },
   "since": null
 }
