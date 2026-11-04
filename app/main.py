@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request
 from app.config import get_settings
 from app.db import make_engine, make_session_factory
 from app.errors import register_exception_handlers
+from app.limits import BodySizeLimitMiddleware
 from app.logging import bind_context, configure_logging, reset_context
 from app.routers import health, reply, reviews, rules, stats, tickets, webhooks
 from app.services.worker import Worker
@@ -44,6 +45,9 @@ def create_app() -> FastAPI:
     app = FastAPI(title="ticket-triage", lifespan=lifespan)
     app.state.engine = engine
     app.state.session_factory = session_factory
+    # Added before the request-context middleware so it runs inside it and a 413
+    # still carries X-Request-ID and a request log line.
+    app.add_middleware(BodySizeLimitMiddleware)
 
     @app.middleware("http")
     async def request_context(request: Request, call_next):

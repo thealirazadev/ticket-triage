@@ -225,3 +225,41 @@ def test_list_empty_database(client):
 def test_list_bad_filter_returns_422(client):
     assert client.get("/tickets", params={"status": "bogus"}).status_code == 422
     assert client.get("/tickets", params={"priority": "P9"}).status_code == 422
+
+
+def test_request_body_over_cap_returns_413_before_parsing(client):
+    from app.limits import MAX_BODY_BYTES
+
+    # Unknown webhook fields are ignored by validation, so only the body cap
+    # stops a huge padding field from being buffered and parsed.
+    padding = "x" * (MAX_BODY_BYTES + 1)
+    response = client.post(
+        "/webhooks/email",
+        json={"message_id": "wh-huge", "from": "a@b.com", "text": "hi", "pad": padding},
+    )
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "payload_too_large"
+    assert response.headers["X-Request-ID"]
+    assert client.get("/tickets").json()["total"] == 0
+
+
+def test_chunked_body_over_cap_returns_413(client):
+    from app.limits import MAX_BODY_BYTES
+
+    def chunks():
+        yield b'{"message_id": "wh-chunked", "from": "a@b.com", "text": "hi", "pad": "'
+        for _ in range(MAX_BODY_BYTES // 65536 + 2):
+            yield b"x" * 65536
+        yield b'"}'
+
+    response = client.post(
+        "/webhooks/email", content=chunks(), headers={"Content-Type": "application/json"}
+    )
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "payload_too_large"
+
+
+def test_worst_case_valid_ticket_fits_under_cap(make_ticket):
+    # Every character JSON-escaped as \uXXXX is the largest a valid body can be.
+    response = make_ticket(external_id="escaped", body="\u0001" * 50_000)
+    assert response.status_code == 201

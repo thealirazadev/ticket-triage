@@ -78,6 +78,7 @@ def register_exception_handlers(app: FastAPI) -> None:
             401: "unauthorized",
             404: "not_found",
             409: "invalid_state",
+            413: "payload_too_large",
             422: "validation_error",
         }
         code = mapping.get(exc.status_code, "internal_error")

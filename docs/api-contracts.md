@@ -25,6 +25,7 @@ Every non-2xx response uses exactly:
 | `unauthorized`     | 401    | Missing or invalid `X-API-Key` (when auth is enabled).     |
 | `not_found`        | 404    | Ticket id (or route) does not exist.                       |
 | `invalid_state`    | 409    | Action not allowed from the ticket's current status.       |
+| `payload_too_large` | 413  | Request body over 1 MiB; rejected before auth and parsing. |
 | `internal_error`   | 500    | Unhandled server error; detail is in the logs only.        |
 
 Provider failures never surface as HTTP errors on these routes: classification happens in the background worker, and its failures materialize as ticket state (`needs_human` + `triage_error`), not as 5xx responses.
@@ -403,8 +404,8 @@ Operational totals: ticket flow and provider spend.
 |------------------------------|-----------|----------------------|
 | `GET /health`                | 200       | -                    |
 | `GET /ready`                 | 200       | 503                  |
-| `POST /tickets`              | 201 / 200 | 422, 401             |
-| `POST /webhooks/email`       | 201 / 200 | 422, 401             |
+| `POST /tickets`              | 201 / 200 | 422, 413, 401        |
+| `POST /webhooks/email`       | 201 / 200 | 422, 413, 401        |
 | `GET /tickets`               | 200       | 422, 401             |
 | `GET /tickets/{id}`          | 200       | 404, 401             |
 | `GET /reviews/pending`       | 200       | 401                  |
