@@ -280,7 +280,7 @@ External dependencies at runtime: the LLM provider API (network) and the databas
 | `LLM_PRICE_INPUT_PER_MTOK` | no       | `0`                         | USD per 1M input tokens, for cost rows.            |
 | `LLM_PRICE_OUTPUT_PER_MTOK`| no       | `0`                         | USD per 1M output tokens.                          |
 | `DATABASE_URL`             | no       | `sqlite:///./data/tickets.db` | SQLAlchemy URL; Postgres in prod.                |
-| `API_KEY`                  | no       | (unset)                     | When set, all routes except `/health` require it.  |
+| `API_KEY`                  | no       | (unset)                     | Set: all routes but `/health`, `/ready` need it.   |
 | `DEFAULT_QUEUE`            | no       | `general`                   | Queue for no-match routing and `needs_human`.      |
 | `WORKER_ENABLED`           | no       | `true`                      | Start the triage worker thread.                    |
 | `WORKER_POLL_SECONDS`      | no       | `2`                         | Worker poll interval.                              |
