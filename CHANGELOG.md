@@ -37,3 +37,19 @@ tagged yet. This section records the initial feature set.
   (SQLite in development, Postgres in production).
 - Structured JSON logging with a request-id, a single `{"error": {"code",
   "message"}}` response shape, and an optional constant-time API-key gate.
+
+### Fixed
+
+- Ticket text containing `</ticket>` or `</triage>` can no longer close its
+  delimited block in the classification and reply prompts.
+- Request bodies over 1 MiB are rejected with `413 payload_too_large` before
+  auth and parsing.
+- A provider 200 whose JSON is not a chat-completions envelope is recorded as
+  a retryable `api_error`; malformed token counts are stored as null.
+- A ticket that raises an unexpected error in the worker is skipped instead of
+  being re-picked in a tight loop ahead of every other ticket.
+- Concurrent approve/correct on the same ticket now returns `409` to the loser
+  instead of overwriting the decision or failing with `500`.
+- The README demo mock answers reply-draft calls, and the example session
+  matches current output.
+- A warning is logged at startup when `API_KEY` is unset.
