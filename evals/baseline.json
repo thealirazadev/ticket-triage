@@ -1,21 +1,21 @@
 {
-  "created_at": "2026-07-22T23:07:59Z",
-  "dataset_sha256": "3b69f69eab45db393d5620135857e47cbcf152382b40a05e6e244375f2006f28",
+  "created_at": "2026-11-08T22:37:29Z",
+  "dataset_sha256": "ac0e32ea2f2b5f1d671d5d6e29404fd6cf3acc5800ece29236e01c0bf62f8e35",
   "metrics": {
     "intent": {
-      "accuracy": 0.9529,
-      "macro_f1": 0.9515
+      "accuracy": 0.8941,
+      "macro_f1": 0.8951
     },
     "priority": {
-      "accuracy": 0.9882,
-      "macro_f1": 0.9854
+      "accuracy": 0.8706,
+      "macro_f1": 0.7891
     },
     "sentiment": {
-      "accuracy": 0.9765,
-      "macro_f1": 0.9735
+      "accuracy": 0.8706,
+      "macro_f1": 0.8761
     }
   },
-  "model": "example-model-id",
+  "model": "claude-haiku-5-5",
   "n": 85,
   "parse_failure_rate": 0.0,
   "prompt_version": "1"
