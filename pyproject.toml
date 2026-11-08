@@ -21,6 +21,7 @@ dev = [
     "pytest==9.0.3",
     "ruff==0.8.6",
     "black==26.10.1",
+    "pytest-cov==7.1.0",
 ]
 
 [build-system]
@@ -48,3 +49,7 @@ extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["error::DeprecationWarning"]
+addopts = "--cov=app --cov-report=term-missing:skip-covered"
+
+[tool.coverage.report]
+fail_under = 90
