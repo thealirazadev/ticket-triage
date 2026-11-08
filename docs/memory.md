@@ -66,3 +66,9 @@ Running log of what is done, what is in flight, and why non-obvious decisions we
   architecture.md change). Intent has the same issue in a smaller way: billing questions such
   as proration were predicted `how_to` (3 of 13). The baseline was not regenerated, because
   baking these numbers in would hide the disagreement.
+- 2026-11-09 (owner approved): relabeled 21 dataset priorities to the documented definitions
+  (rule: P3 also covers billing errors a refund fixes; requests, feature requests, account
+  changes, and refund requests are P4). Added `evals.run --record`, re-recorded
+  `fixtures.jsonl` and `baseline.json` from one real Haiku 5.5 run, replacing the hand-made
+  fixtures (and their seven intentional mismatches). Priority accuracy 0.66 -> 0.87, macro-F1
+  0.61 -> 0.79; intent 0.89, sentiment 0.87. Remaining weak spot: P3 recall 0.50.
