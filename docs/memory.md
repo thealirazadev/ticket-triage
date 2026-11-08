@@ -42,3 +42,27 @@ Running log of what is done, what is in flight, and why non-obvious decisions we
 - 2026-07-27: Reply prompts are versioned with a separate `REPLY_PROMPT_VERSION`, not the classification `PROMPT_VERSION`. `PROMPT_VERSION` is recorded in the eval baseline; bumping it for a reply-prompt edit would falsely signal a classification change and disturb the eval gate. The two prompt families version independently.
 - 2026-07-27: The draft generator uses distinct `llm_calls.purpose` values (`reply_draft`, `reply_repair`) rather than reusing `classify`/`repair`, so per-ticket draft cost/latency is separable from triage in `GET /tickets/{id}/reply`. The ticket detail `metrics` intentionally sums ALL calls (triage + draft) as total per-ticket spend; the reply endpoint reports the draft-only subset.
 - 2026-07-27: Migration 0003 alters the `llm_calls.purpose` CHECK via `op.batch_alter_table(recreate="always")` because SQLite cannot alter a CHECK in place. Verified on a fresh DB that the recreate preserves the FK, the outcome CHECK, and both indexes, and that downgrade restores the two-value CHECK and drops `reply_drafts`.
+
+## Real-model manual run (2026-11-09)
+
+- Phase 1 manual checklist run end to end against Claude Haiku 5.5 through a local
+  OpenAI-compatible shim (the shim calls the Claude Code CLI and lived outside the repo): real
+  triage with sensible labels and summary, idempotent re-POST, email webhook defaults, `fax`
+  422, 50,001-char 422 and 40,000-char triage, unreachable provider -> `needs_human`
+  (`provider_error`, `timeout` rows), breaker opened after 5 with a WARNING and later tickets
+  `circuit_open` with no provider call, restart picks up a `received` ticket, `API_KEY` 401 with
+  `/health` open, JSON logs with request and ticket ids and no ticket text or keys (only
+  uvicorn's own four startup lines are plain text).
+- Real-provider eval, 85 rows, Haiku, $0.29: intent accuracy 0.88 (macro-F1 0.88), priority
+  0.66 (macro-F1 0.61), sentiment 0.86; 0 parse failures. The gate failed (priority macro-F1
+  -0.37 against the offline baseline), which also confirms regression detection on a real run.
+  `--limit 5` skips the gate; a one-row dataset edit exits 2 with the hash message.
+- **Owner decision: priority taxonomy.** The model follows the prompt's definitions
+  (architecture.md: P3 = degraded with a workaround, P4 = question or minor request), but the
+  dataset's gold labels use another convention: 20 of 23 gold P3 rows were predicted P4, and
+  they are requests needing action ("change the invoice email", feature requests, minor
+  cosmetic bugs). Some gold rows also look inconsistent ("switch from monthly to annual" is P2).
+  Either relabel the dataset to the documented definitions or change the definitions (an
+  architecture.md change). Intent has the same issue in a smaller way: billing questions such
+  as proration were predicted `how_to` (3 of 13). The baseline was not regenerated, because
+  baking these numbers in would hide the disagreement.

@@ -43,17 +43,17 @@ Ordering rationale: Phase 1 is the whole triage pipeline (ingest -> classify -> 
 - CI workflow runs `ruff check`, `black --check`, `pytest` on push/PR and is green. `uv run ruff check .`, `uv run black --check .`, `uv run pytest` pass locally; provider is mocked in all tests.
 
 ### Manual test checklist
-- [ ] Start the server; `curl /health` returns `{"status":"ok"}`; worker start logged.
-- [ ] POST a ticket (real provider configured); poll `GET /tickets/{id}` until `triaged`; labels are from the enums, summary reads sensibly, queue matches the seeded rules, `metrics` shows tokens/cost/latency.
-- [ ] POST the same `external_id` again; confirm `200`, same id, still one row, state untouched.
-- [ ] POST to `/webhooks/email` with an extra unknown field and no subject; confirm `201`, `channel: "email"`, subject `(no subject)`.
-- [ ] POST with `channel: "fax"`; confirm `422 validation_error` in the standard shape.
-- [ ] POST a body over 50,000 chars; confirm `422`; POST a 40,000-char body; confirm it triages (long input path).
-- [ ] Set `LLM_BASE_URL` to an unreachable address; POST a ticket; confirm ingestion still `201`, then `needs_human` with `triage_error: "provider_error"` after the retry window; `llm_calls` rows show `timeout`/`api_error`.
-- [ ] Keep posting until the breaker opens (threshold 5); confirm WARNING log, and the next ticket goes `needs_human` (`circuit_open`) near-instantly with no new provider call.
-- [ ] Stop the server with a ticket still `received`; restart; confirm the worker picks it up.
-- [ ] Set `API_KEY`; confirm `401` without header, success with it, `/health` still open.
-- [ ] Inspect logs: JSON lines, request ids, ticket ids; no subject/body text, no keys.
+- [x] Start the server; `curl /health` returns `{"status":"ok"}`; worker start logged.
+- [x] POST a ticket (real provider configured); poll `GET /tickets/{id}` until `triaged`; labels are from the enums, summary reads sensibly, queue matches the seeded rules, `metrics` shows tokens/cost/latency.
+- [x] POST the same `external_id` again; confirm `200`, same id, still one row, state untouched.
+- [x] POST to `/webhooks/email` with an extra unknown field and no subject; confirm `201`, `channel: "email"`, subject `(no subject)`.
+- [x] POST with `channel: "fax"`; confirm `422 validation_error` in the standard shape.
+- [x] POST a body over 50,000 chars; confirm `422`; POST a 40,000-char body; confirm it triages (long input path).
+- [x] Set `LLM_BASE_URL` to an unreachable address; POST a ticket; confirm ingestion still `201`, then `needs_human` with `triage_error: "provider_error"` after the retry window; `llm_calls` rows show `timeout`/`api_error`.
+- [x] Keep posting until the breaker opens (threshold 5); confirm WARNING log, and the next ticket goes `needs_human` (`circuit_open`) near-instantly with no new provider call.
+- [x] Stop the server with a ticket still `received`; restart; confirm the worker picks it up.
+- [x] Set `API_KEY`; confirm `401` without header, success with it, `/health` still open.
+- [x] Inspect logs: JSON lines, request ids, ticket ids; no subject/body text, no keys.
 
 ---
 
@@ -81,10 +81,10 @@ Ordering rationale: Phase 1 is the whole triage pipeline (ingest -> classify -> 
 - Metric math and the regression gate are unit-tested with a deterministic mocked provider (no network in pytest). Lint/format/tests green.
 
 ### Manual test checklist
-- [ ] Run the eval with a real key; read the report; metrics are plausible and every label appears in the per-label table.
-- [ ] Run with `--limit 5`; confirm a fast smoke run and a clear note that the gate is skipped/partial.
-- [ ] Deliberately degrade the prompt (scratch edit), rerun; confirm regression detection, exit 1, red verdict; revert.
-- [ ] Edit one dataset row, rerun without updating baseline; confirm exit 2 hash-mismatch message; run `--update-baseline`; confirm new baseline written; revert both.
+- [x] Run the eval with a real key; read the report; metrics are plausible and every label appears in the per-label table.
+- [x] Run with `--limit 5`; confirm a fast smoke run and a clear note that the gate is skipped/partial.
+- [x] Deliberately degrade the prompt (scratch edit), rerun; confirm regression detection, exit 1, red verdict; revert.
+- [x] Edit one dataset row, rerun without updating baseline; confirm exit 2 hash-mismatch message; run `--update-baseline`; confirm new baseline written; revert both.
 - [ ] Pipe the report to a file and run with `NO_COLOR=1`; confirm no ANSI codes and identical content.
 - [ ] Run the eval with `LLM_API_KEY` unset; confirm `error:` on stderr and exit 2 (no traceback).
 - [ ] `GET /stats` after the Phase 1 manual tickets; totals match expectations; `?since=<tomorrow>` returns zeros; `?since=garbage` returns `422`.
