@@ -132,6 +132,7 @@ def run_pipeline(
     fixtures: dict[str, str] | None,
     limit: int | None = None,
     progress: bool = False,
+    recorded: list[dict] | None = None,
 ) -> RunOutput:
     session_factory = _in_memory_session_factory()
     shared_client = None if fixtures is not None else LlmClient(settings)
@@ -167,6 +168,11 @@ def run_pipeline(
                     "priority": outcome.result.priority,
                     "sentiment": outcome.result.sentiment,
                 }
+                if recorded is not None:
+                    content = {**pred, "summary": outcome.result.summary}
+                    recorded.append(
+                        {"external_id": row["external_id"], "content": json.dumps(content)}
+                    )
             except TriageFailure as exc:
                 failure = exc.reason
                 if exc.reason == "parse_failed":
@@ -403,6 +409,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fixtures", default=os.environ.get("EVAL_FIXTURES_PATH"))
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--update-baseline", action="store_true")
+    parser.add_argument(
+        "--record",
+        metavar="PATH",
+        help="write each validated provider answer as a fixtures file (real-provider runs only)",
+    )
     parser.add_argument("--no-fail-on-regression", action="store_true")
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument("-q", "--quiet", action="store_true")
@@ -426,6 +437,8 @@ def main(argv: list[str] | None = None) -> int:
         sha = dataset_sha256(args.dataset)
         fixtures = load_fixtures(args.fixtures) if args.fixtures else None
         _require_provider(settings, fixtures)
+        if args.record and fixtures is not None:
+            raise EvalConfigError("--record needs a real provider run; drop --fixtures")
         baseline = load_baseline(args.baseline)
         # A changed dataset invalidates the comparison: fail fast before spending
         # on provider calls, unless we are explicitly rewriting the baseline.
@@ -439,9 +452,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
+    recorded: list[dict] | None = [] if args.record else None
     output = run_pipeline(
-        rows, settings, fixtures=fixtures, limit=args.limit, progress=sys.stderr.isatty()
+        rows,
+        settings,
+        fixtures=fixtures,
+        limit=args.limit,
+        progress=sys.stderr.isatty(),
+        recorded=recorded,
     )
+    if args.record and recorded is not None:
+        with open(args.record, "w", encoding="utf-8") as handle:
+            handle.writelines(json.dumps(entry) + "\n" for entry in recorded)
     metrics = compute_metrics(output)
     model = settings.llm_model or "(none)"
     report = render_report(

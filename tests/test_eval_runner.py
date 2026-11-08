@@ -170,3 +170,24 @@ def test_main_update_baseline_writes_file(eval_env, tmp_path, capsys):
     assert written["prompt_version"] == "1"
     assert set(written["metrics"]) == {"intent", "priority", "sentiment"}
     assert "dataset_sha256" in written
+
+
+def test_record_writes_replayable_fixtures(eval_env, tmp_path, monkeypatch):
+    fixtures = run.load_fixtures("evals/fixtures.jsonl")
+    rows = run.load_dataset("evals/dataset.jsonl")[:3]
+    recorded: list[dict] = []
+
+    first = run.run_pipeline(rows, get_settings(), fixtures=fixtures, recorded=recorded)
+    replay = run.run_pipeline(
+        rows, get_settings(), fixtures={e["external_id"]: e["content"] for e in recorded}
+    )
+
+    assert [e["external_id"] for e in recorded] == [r["external_id"] for r in rows]
+    assert set(json.loads(recorded[0]["content"])) == {"intent", "priority", "sentiment", "summary"}
+    assert [r.pred for r in replay.results] == [r.pred for r in first.results]
+
+
+def test_record_refuses_a_fixture_run(eval_env, tmp_path, capsys):
+    code = run.main(["--fixtures", "evals/fixtures.jsonl", "--record", str(tmp_path / "f.jsonl")])
+    assert code == 2
+    assert "--record needs a real provider run" in capsys.readouterr().err
