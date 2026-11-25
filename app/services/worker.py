@@ -1,8 +1,9 @@
 """The single background worker: poll for received tickets and triage them.
 
 The `received` status is the queue: on restart, unprocessed tickets are picked
-up again. One poisoned ticket is contained (logged, skipped) and never kills the
-loop. There is no asyncio and no broker; the loop is a plain daemon thread.
+up again. One poisoned ticket is contained (logged, moved to needs_human) and
+never kills or stalls the loop. There is no asyncio and no broker; the loop is a
+plain daemon thread.
 """
 
 import logging
@@ -38,6 +39,7 @@ def process_next_ticket(db: Session, client: LlmClient, settings: Settings) -> b
     ).first()
     if ticket is None:
         return False
+    ticket_id = ticket.id
 
     try:
         outcome = classify_ticket(
@@ -61,10 +63,25 @@ def process_next_ticket(db: Session, client: LlmClient, settings: Settings) -> b
         )
         return True
     except Exception:
-        # Unexpected failure: roll back and leave the ticket for a later poll,
-        # but do not let one ticket take down the worker.
+        # Unexpected failure: roll back, then hand the ticket to a human. Leaving
+        # it `received` would make the next poll pick the same oldest ticket at
+        # once, retrying it (and paying for provider calls) in a tight loop while
+        # every newer ticket waits behind it. triage_error stays NULL: none of its
+        # codes fits, and the log line carries the traceback.
         db.rollback()
-        log.exception("ticket processing error", extra={"ticket_id": ticket.id})
+        log.exception("ticket processing error", extra={"ticket_id": ticket_id})
+        try:
+            ticket.status = "needs_human"
+            ticket.queue = settings.default_queue
+            ticket.triage_error = None
+            ticket.updated_at = utcnow()
+            db.commit()
+        except Exception:
+            # The database itself is failing: leave the ticket and let the loop
+            # back off one poll interval instead of spinning.
+            db.rollback()
+            log.exception("ticket fallback failed", extra={"ticket_id": ticket_id})
+            return False
         return True
 
     triage = Triage(

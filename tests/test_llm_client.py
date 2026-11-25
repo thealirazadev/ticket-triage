@@ -134,6 +134,18 @@ def test_malformed_200_body_recorded_as_api_error(db, make_llm_client, no_backof
     assert client.breaker._consecutive_failures == 1
 
 
+def test_wrong_shape_200_body_recorded_as_api_error(db, make_llm_client, no_backoff):
+    # Valid JSON of the wrong shape (a list, or choices that is not a list) must
+    # fail like a malformed body instead of raising AttributeError in the worker.
+    for body in ([{"choices": []}], {"choices": "oops"}):
+        handler = _count_handler(lambda _n, _r, body=body: httpx.Response(200, json=body))
+        client = make_llm_client(handler)
+        with pytest.raises(ProviderError) as excinfo:
+            client.complete(db, MESSAGES, purpose="classify")
+        assert excinfo.value.outcome == "api_error"
+        assert handler.calls["n"] == 3
+
+
 def test_408_recorded_as_timeout(db, make_llm_client, no_backoff):
     # A 408 Request Timeout is a timeout outcome, not a generic api_error; the
     # recorded outcome must reflect that for accurate stats.

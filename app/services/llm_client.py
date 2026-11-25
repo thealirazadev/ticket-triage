@@ -34,6 +34,10 @@ class ProviderError(Exception):
         self.outcome = outcome  # "timeout" or "api_error"
 
 
+class _MalformedBody(ValueError):
+    """A 200 response whose JSON does not have the chat-completions shape."""
+
+
 class CircuitOpenError(Exception):
     """The breaker is open; no provider call was made."""
 
@@ -207,11 +211,11 @@ class LlmClient:
             if response.status_code == 200:
                 try:
                     content, usage = self._extract(response)
-                except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-                    # A 200 whose body is not decodable JSON is a broken provider
-                    # response, not triage data. Record it as a failure so cost and
-                    # outcome are accounted for and the breaker can trip, instead of
-                    # letting an unhandled decode error escape the client.
+                except (json.JSONDecodeError, UnicodeDecodeError, _MalformedBody) as exc:
+                    # A 200 whose body is not decodable JSON, or is JSON of the wrong
+                    # shape, is a broken provider response, not triage data. Record it
+                    # as a failure so cost and outcome are accounted for and the breaker
+                    # can trip, instead of letting an unhandled error escape the client.
                     last_outcome = "api_error"
                     last_detail = f"malformed body: {type(exc).__name__}"
                     if attempt < attempts - 1:
@@ -231,11 +235,18 @@ class LlmClient:
     @staticmethod
     def _extract(response: httpx.Response) -> tuple[str | None, dict | None]:
         data = response.json()
+        if not isinstance(data, dict):
+            raise _MalformedBody("body is not a JSON object")
         content = None
         choices = data.get("choices") or []
+        if not isinstance(choices, list):
+            raise _MalformedBody("choices is not a list")
         if choices:
-            content = (choices[0].get("message") or {}).get("content")
-        return content, data.get("usage")
+            choice = choices[0] if isinstance(choices[0], dict) else {}
+            message = choice.get("message") or {}
+            content = message.get("content") if isinstance(message, dict) else None
+        usage = data.get("usage")
+        return content, usage if isinstance(usage, dict) else None
 
     @staticmethod
     def _sleep_backoff(attempt: int) -> None:
