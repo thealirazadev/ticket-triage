@@ -5,6 +5,8 @@ metric shift is attributable to a wording change. Bump it on any edit to the
 prompt text below.
 """
 
+import re
+
 PROMPT_VERSION = "1"
 
 # Versioned independently of PROMPT_VERSION: the reply-draft prompts can change
@@ -110,6 +112,16 @@ Return a corrected JSON object with exactly the single key "reply" (a plain-text
 draft). Return the JSON object only, with no other text."""
 
 
+# Ticket fields are customer-controlled. A closing tag inside one would end the
+# <ticket> block early and let the rest pose as instructions outside it, so those
+# tags are escaped. Tickets without such a tag reach the model unchanged.
+_CLOSING_TAG = re.compile(r"</\s*(ticket|triage)\s*>", re.IGNORECASE)
+
+
+def fence(value: str) -> str:
+    return _CLOSING_TAG.sub(lambda m: f"&lt;/{m.group(1)}&gt;", value)
+
+
 def truncate_body(body: str) -> str:
     if len(body) <= MAX_BODY_CHARS:
         return body
@@ -118,7 +130,10 @@ def truncate_body(body: str) -> str:
 
 def build_classify_messages(subject: str, sender: str, channel: str, body: str) -> list[dict]:
     user = _CLASSIFY_TEMPLATE.format(
-        subject=subject, sender=sender, channel=channel, body=truncate_body(body)
+        subject=fence(subject),
+        sender=fence(sender),
+        channel=channel,
+        body=fence(truncate_body(body)),
     )
     return [
         {"role": "system", "content": _SYSTEM},
@@ -148,14 +163,14 @@ def build_reply_messages(
     summary: str,
 ) -> list[dict]:
     user = _REPLY_TEMPLATE.format(
-        subject=subject,
-        sender=sender,
+        subject=fence(subject),
+        sender=fence(sender),
         channel=channel,
-        body=truncate_body(body),
+        body=fence(truncate_body(body)),
         intent=intent,
         priority=priority,
         sentiment=sentiment,
-        summary=summary,
+        summary=fence(summary),
     )
     return [
         {"role": "system", "content": _REPLY_SYSTEM},

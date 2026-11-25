@@ -79,7 +79,9 @@ re-routed, except that a correction re-routes its ticket by the corrected labels
 ## 8. Ticket text is untrusted input
 
 Subject, body, and sender are embedded in the prompt as clearly delimited data, with an
-instruction that they are content to classify rather than instructions to follow. The blast
+instruction that they are content to classify rather than instructions to follow. A closing
+`</ticket>` or `</triage>` tag inside a field is escaped, so a ticket cannot end its own block
+and pose as prompt text outside it. The blast
 radius of a hostile ticket is capped by decision 3: the model can only produce a `TriageResult`,
 so the worst case is a wrong label or a slanted summary, which is reviewable, correctable, and
 measured by the eval set. Summaries are model text derived from untrusted input, and the API
