@@ -17,10 +17,11 @@
 
 - `tests/conftest.py` - fixtures: `db` (tmp SQLite + `alembic upgrade head`), `client` (TestClient with overridden settings, worker off), `provider` (configurable MockTransport handler), `make_ticket` (factory posting a valid ticket).
 - `tests/test_ingestion.py` - create, replay idempotency (200, single row), webhook mapping (empty subject, extra fields), every validation bound (subject/body/sender/external_id lengths, bad channel).
-- `tests/test_llm_client.py` - timeouts, retry/backoff, 429 vs 400, breaker lifecycle, `llm_calls` recording.
+- `tests/test_llm_client.py` - timeouts, retry/backoff, 429 vs 400, breaker lifecycle, `llm_calls` recording, and 200 bodies that are not JSON or not the chat-completions shape recorded as `api_error`.
+- `tests/test_prompts.py` - closing `</ticket>` and `</triage>` tags inside ticket fields are escaped; ordinary tickets reach the prompt unchanged.
 - `tests/test_classifier.py` - clean parse, repair success (attempts=2), double failure -> `TriageFailure(parse_failed)`, normalization, truncation of long bodies.
 - `tests/test_routing.py` - rule order, wildcards, AND semantics, empty rule set, default queue.
-- `tests/test_worker.py` - received -> triaged happy path, needs_human on parse/provider/circuit failures, per-ticket exception containment, restart-resume (re-run picks up remaining received tickets).
+- `tests/test_worker.py` - received -> triaged happy path, needs_human on parse/provider/circuit failures, per-ticket exception containment (an unexpected error moves the ticket to needs_human and the next poll moves on), restart-resume (re-run picks up remaining received tickets).
 - `tests/test_reviews.py` - pending ordering, approve/correct state machine (every `409`), correction re-routing, export line shape and `since` filter.
 - `tests/test_rules_api.py` - list, transactional replace, all validation rejections, empty set.
 - `tests/test_stats.py` - aggregates match direct queries, `since` filter, zeros on empty DB.

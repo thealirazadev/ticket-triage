@@ -152,7 +152,7 @@ Five tables, all keyed by `uuid4().hex` TEXT ids except `routing_rules` (small, 
 | body          | TEXT      | NOT NULL, 1-50,000 chars                                           |
 | status        | TEXT      | CHECK in (`received`, `triaged`, `needs_human`, `approved`, `corrected`) |
 | queue         | TEXT NULL | assigned queue name; null until triage                             |
-| triage_error  | TEXT NULL | why triage fell back: `parse_failed`, `provider_error`, `circuit_open` |
+| triage_error  | TEXT NULL | why triage fell back: `parse_failed`, `provider_error`, `circuit_open`; NULL on a `needs_human` ticket when an unexpected internal error stopped triage (the traceback is in the log) |
 | created_at    | TIMESTAMP | UTC                                                                |
 | updated_at    | TIMESTAMP | UTC                                                                |
 
@@ -238,7 +238,7 @@ Fixed; changing them is a PRD-level change plus a migration (CHECK constraints) 
 ## Classification contract (structured-output discipline)
 
 - `app/prompts.py` holds the templates and `PROMPT_VERSION` (bump on any wording change; it is recorded on every triage and in the eval baseline, so metric shifts are attributable).
-- The prompt states the task, the exact label sets with the priority definitions, and requires a single JSON object with keys `intent`, `priority`, `sentiment`, `summary` and nothing else. Ticket fields are embedded inside clearly delimited blocks and explicitly framed as data to classify, not instructions to follow; bodies over 12,000 chars are truncated for the prompt (logged; the full body stays in the DB). Temperature 0.
+- The prompt states the task, the exact label sets with the priority definitions, and requires a single JSON object with keys `intent`, `priority`, `sentiment`, `summary` and nothing else. Ticket fields are embedded inside clearly delimited blocks and explicitly framed as data to classify, not instructions to follow; a closing `</ticket>` or `</triage>` tag inside a field is escaped so it cannot end the block early; bodies over 12,000 chars are truncated for the prompt (logged; the full body stays in the DB). Temperature 0.
 - The response body's message content is parsed as JSON (tolerating surrounding code fences) and validated by the `TriageResult` pydantic model: enum-checked labels (values lowercased/trimmed before checking, except priority which is uppercased - cheap normalization avoids pointless repair calls), summary 1-600 chars. Unknown extra keys are ignored.
 - On parse or validation failure: exactly one repair call containing the invalid output and the validation errors, demanding corrected JSON only. On a second failure: no triage row, ticket -> `needs_human` + `DEFAULT_QUEUE` + `triage_error = "parse_failed"`. Invalid model output is never persisted anywhere except as a truncated snippet in a WARNING log line.
 

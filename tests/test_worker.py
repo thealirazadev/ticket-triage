@@ -3,6 +3,7 @@
 import httpx
 
 from app.models import Ticket, Triage
+from app.services import worker
 from app.services.llm_client import LlmClient
 from app.services.worker import process_next_ticket
 from tests.conftest import chat_response, triage_json
@@ -110,6 +111,35 @@ def test_circuit_open_sets_needs_human_without_call(db, settings):
     assert ticket.status == "needs_human"
     assert ticket.triage_error == "circuit_open"
     assert calls["n"] == 0
+
+
+def test_unexpected_error_hands_ticket_to_human_and_unblocks_queue(
+    db, settings, make_llm_client, monkeypatch
+):
+    poisoned = _received_ticket(db, external_id="old-1")
+    behind = _received_ticket(db, external_id="new-2")
+    client = make_llm_client(lambda _r: httpx.Response(200, json=chat_response(triage_json())))
+
+    real_classify = worker.classify_ticket
+    failed = []
+
+    def explode_once(*args, **kwargs):
+        if not failed:
+            failed.append(True)
+            raise RuntimeError("unexpected")
+        return real_classify(*args, **kwargs)
+
+    monkeypatch.setattr(worker, "classify_ticket", explode_once)
+    assert process_next_ticket(db, client, settings) is True
+    db.refresh(poisoned)
+    assert poisoned.status == "needs_human"
+    assert poisoned.queue == "general"
+    assert poisoned.triage_error is None
+
+    # The next poll moves on to the ticket behind it instead of retrying the first.
+    process_next_ticket(db, client, settings)
+    db.refresh(behind)
+    assert behind.status == "triaged"
 
 
 def test_no_received_ticket_returns_false(db, settings, make_llm_client):
