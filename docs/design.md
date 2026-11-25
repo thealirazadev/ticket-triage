@@ -68,4 +68,4 @@ One JSON object per line: `timestamp`, `level`, `logger`, `message`, then contex
 
 ## Accessibility baseline
 
-With no GUI, accessibility obligations land on the terminal and API surfaces: no color-only meaning and `NO_COLOR` respect (above); report layout readable by screen readers (linear, labeled, no ASCII art); API and OpenAPI descriptions in plain language. If any web frontend is ever proposed, it starts from semantic HTML, labeled inputs, keyboard operability, visible focus, and WCAG AA contrast - and from a new phase, not this build.
+With no GUI, accessibility obligations land on the terminal and API surfaces: no color-only meaning and `NO_COLOR` respect (above); report layout readable by screen readers (linear, labeled, no ASCII art); API and OpenAPI descriptions in plain language. If any web frontend is ever proposed, it starts from semantic HTML, labeled inputs, keyboard operability, visible focus, and WCAG AA contrast.

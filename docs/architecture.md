@@ -134,7 +134,7 @@ Major versions below; exact versions are pinned (`==`) in `pyproject.toml` at in
 - **LLM provider API** - a chat-completions-style HTTP endpoint; `LLM_BASE_URL`, `LLM_MODEL`, and `LLM_API_KEY` come from env, so the provider is swappable config, not code. The service requests JSON output by prompt instruction and trusts nothing: every response passes through `TriageResult` validation. Token usage is read from the standard `usage` object when present; when absent, tokens are recorded as null and cost as 0 (never estimated).
 - **pytest 9 / Ruff / Black 26** - tests, lint, format; managed with `uv`, lockfile committed.
 
-No other runtime dependencies. Anything beyond this list requires approval per `docs/rules.md`.
+No other runtime dependencies. Adding one is a deliberate, reviewed change.
 
 ## Data model
 
@@ -249,7 +249,7 @@ All in `services/llm_client.py`, unit-tested against `httpx.MockTransport`:
 - **Timeouts**: connect 5s, read `LLM_TIMEOUT_SECONDS` (default 30) on every call. No unbounded waits.
 - **Retries**: on timeout, connection error, 429, or 5xx - up to `LLM_MAX_RETRIES` (default 2) extra attempts with exponential backoff plus jitter (roughly 0.5s then 2s). 4xx other than 429 fails immediately (retrying a bad request wastes money).
 - **Circuit breaker**: in-memory consecutive-failure counter. At `CIRCUIT_FAILURE_THRESHOLD` (default 5) the circuit opens for `CIRCUIT_COOLDOWN_SECONDS` (default 60): the worker skips the provider entirely and marks tickets `needs_human` with `triage_error = "circuit_open"` (cheap, no timeout waits). After cooldown, one trial call: success closes the circuit, failure reopens it. State transitions are logged at WARNING.
-- Trade-off, stated plainly: during an outage tickets accumulate in the human queue rather than waiting invisibly for recovery; they are not auto-re-triaged (see Non-goals). Ingestion never touches the provider, so `POST /tickets` stays fast and available throughout.
+- Trade-off, stated plainly: during an outage tickets accumulate in the human queue rather than waiting invisibly for recovery; they are not auto-re-triaged (see `docs/decisions.md`). Ingestion never touches the provider, so `POST /tickets` stays fast and available throughout.
 
 ## Eval harness
 

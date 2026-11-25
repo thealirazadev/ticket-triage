@@ -1,6 +1,6 @@
 # ticket-triage - API Contracts
 
-Base URL: `http://127.0.0.1:8000`. All bodies are JSON (`application/json`) except the corrections export, which streams `application/x-ndjson`. Timestamps are ISO-8601 UTC. Every response carries an `X-Request-ID` header for log correlation. This contract is agreed before any code is written; changes go through the owner.
+Base URL: `http://127.0.0.1:8000`. All bodies are JSON (`application/json`) except the corrections export, which streams `application/x-ndjson`. Timestamps are ISO-8601 UTC. Every response carries an `X-Request-ID` header for log correlation. Changes to this contract land together with the code and tests that implement them.
 
 ## Authentication
 

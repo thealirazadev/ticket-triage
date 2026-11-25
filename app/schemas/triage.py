@@ -9,7 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-# Canonical label sets. Changing these is a contract-level change (see rules.md).
+# Canonical label sets. Changing these is a contract-level change (see docs/decisions.md).
 INTENTS: tuple[str, ...] = (
     "billing",
     "bug",

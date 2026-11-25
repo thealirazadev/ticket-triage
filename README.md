@@ -14,7 +14,7 @@ ticket-triage is a support-ticket triage service. Tickets arrive over REST or a 
 - httpx (calls to the LLM provider API, with timeouts, retries, and a circuit breaker)
 - pytest, Ruff, Black (tests, lint, format), managed with `uv` and a committed lockfile
 
-See `docs/PRD.md` for scope, `docs/architecture.md` for the design, and `docs/phases.md` for the build order.
+See `docs/architecture.md` for the design and `docs/decisions.md` for the reasoning behind the main trade-offs.
 
 ## Install
 
@@ -314,7 +314,7 @@ draft records the human's decision; it does not send anything.
 ## Design decisions
 
 The trade-offs below are the load-bearing ones; the full rationale is in
-`docs/architecture.md`.
+`docs/architecture.md` and `docs/decisions.md`.
 
 - **A polling worker thread, not a broker or `BackgroundTasks`.** The database
   is the queue: `status = "received"` *is* the pending entry, so a restart

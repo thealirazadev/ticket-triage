@@ -6,7 +6,7 @@
 - **Unit tests** for the pure logic: `TriageResult` parsing/normalization (fences, casing, extra keys, every rejection path), the repair-then-fallback sequence, the rule engine (order, wildcards, AND conditions, no-match default), cost math, eval metric math (precision/recall/F1/macro-F1, confusion, parse-failure accounting), and the regression gate (pass, fail, hash mismatch).
 - **`llm_client` tests** run against `httpx.MockTransport`: timeout and 5xx retries with backoff (sleep patched), 429 retried, 400 not retried, breaker open/cooldown/trial-call transitions, and one `llm_calls` row per call with correct outcome/latency/cost.
 - **Integration tests** drive the HTTP API through FastAPI's `TestClient` with a real temporary SQLite database migrated by `alembic upgrade head` (so migrations, CHECK constraints, and seeds are genuinely exercised) and the provider transport mocked. The worker thread stays off (`WORKER_ENABLED=false`); tests invoke `worker.process_next_ticket(session)` directly for deterministic triage.
-- **Manual QA** covers what automation cannot: real-provider triage quality, eval report readability, and the checklists in `docs/phases.md`.
+- **Manual QA** covers what automation cannot: real-provider triage quality, eval report readability, outage and restart behavior, and log hygiene.
 
 ### What is mocked vs real
 
@@ -58,9 +58,9 @@ uv run python -m evals.run --limit 5           # cheap smoke
 uv run python -m evals.run --update-baseline   # after an approved metric change
 ```
 
-## Definition of done for any feature
+## Pre-merge checks
 
-A feature (one commit per `docs/phases.md`) is done only when, from a clean checkout:
+A change is ready to merge when, from a clean checkout:
 
 ```bash
 uv sync
@@ -71,4 +71,4 @@ uv run alembic upgrade head
 uv run pytest
 ```
 
-all succeed. After creating or editing files, run these and fix every error before reporting done. If the same failure survives two fix attempts, stop and report per `docs/rules.md`. Changes touching prompts, the classifier, or the client additionally require an eval run (locally or via the CI eval job) before merge.
+all succeed. Changes touching prompts, the classifier, or the client additionally require an eval run (locally or via the CI eval job) before merge.

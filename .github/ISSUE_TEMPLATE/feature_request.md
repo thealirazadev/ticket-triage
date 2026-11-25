@@ -19,9 +19,9 @@ involved.
 
 ## Scope
 
-This project is built from the documents in `docs/` (`PRD.md`, `architecture.md`,
-`phases.md`). Please note whether the request fits the current scope, extends it,
-or is a new direction, so it can be triaged against the roadmap.
+The design and its scope are described in `docs/architecture.md` and
+`docs/decisions.md`. Please note whether the request fits the current scope,
+extends it, or is a new direction.
 
 ## Alternatives considered
 
